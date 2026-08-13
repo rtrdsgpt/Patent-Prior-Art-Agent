@@ -1,0 +1,21 @@
+# Data models / settings
+pydantic>=2.7.0
+pydantic-settings>=2.3.0
+
+# Ingestion (BigQuery — Google Patents Public Data)
+google-cloud-bigquery>=3.25.0
+db-dtypes>=1.2.0
+
+# Retrieval
+rank-bm25>=0.2.2
+sentence-transformers>=2.2.0
+chromadb>=0.5.0
+
+# LLM (Groq primary, same provider as Financial Anomaly Detection Using RAG)
+groq>=0.30.0
+
+# API layer (added in section 3)
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+
+python-dotenv>=1.0.0
