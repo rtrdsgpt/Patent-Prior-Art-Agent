@@ -6,43 +6,49 @@ empty — this is your Agentic/GenAI/LLM CV flagship. See `Project Plan.md` (Pro
 section 4 for full architecture rationale.
 
 ## 0. Data source setup
-- [ ] Register/test access to the **USPTO PatentsView API** (free, no auth required for standard
-      queries) — confirm claims text, abstracts, CPC classification codes, assignees, and
-      examiner-cited prior art are all retrievable
-- [ ] Pick one narrow CPC class to scope the first working slice (don't try to cover all
-      classifications at once)
+- [x] ~~Register/test access to the **USPTO PatentsView API**~~ — superseded: switched to
+      **Google Patents Public Data (BigQuery)** instead, which already has claims text,
+      abstracts, CPC codes, assignees, and (crucially) examiner-cited references without a
+      separate live API integration. See `docs/cpc_scope.md` and `README.md` for the
+      reasoning, and `log.md`'s 2026-08-16 entries for how this was actually verified live
+      (including a correction: the field's documented `EXA` citation category turned out to
+      never be populated in practice — `SEA` is the real examiner-citation signal).
+- [x] Pick one narrow CPC class to scope the first working slice — `G06N3`, see
+      `docs/cpc_scope.md`.
 
 ## 1. Ingestion / RAG index (build this before the agents)
-- [ ] Download/ingest a corpus subset of patents in the target CPC class
-- [ ] Claim-level chunking (a natural, legally meaningful chunk boundary)
-- [ ] Embed + index in a vector DB (Qdrant or Chroma)
-- [ ] Hybrid retrieval: BM25 + embeddings
-- [ ] Cross-encoder reranking stage before the comparison agent
+- [x] Download/ingest a corpus subset of patents in the target CPC class — real BigQuery
+      ingestion (`ingestion/bigquery_client.py`, `ingestion/ingest_corpus.py`), 291 patents
+      cached to `data/corpus.json` (gitignored; see section 4's DVC item).
+- [x] Claim-level chunking (a natural, legally meaningful chunk boundary) —
+      `ingestion/chunking.py`.
+- [x] Embed + index in a vector DB (Chroma) — `retrieval/embedding_index.py`.
+- [x] Hybrid retrieval: BM25 + embeddings — `retrieval/bm25_index.py` +
+      `retrieval/hybrid.py` (Reciprocal Rank Fusion).
+- [x] Cross-encoder reranking stage before the comparison agent —
+      `retrieval/reranker.py`.
 
 ## 2. Agents
-- [ ] **Disclosure-parser agent** — free-text invention disclosure → structured elements
-      (technical field, key components/claims, candidate CPC classification)
-- [ ] **Prior-art search agent** — CPC-class + hybrid retrieval over the indexed corpus; adaptive
-      query expansion if too few/too many candidates found (reuse the bounded-retry pattern from
-      Exporter Crawl's `discovery.py`)
-- [ ] **Claims-parser agent** — structure each candidate patent's independent claims into discrete
-      elements (conceptually similar to Legal SLM SFT's IRAC structuring, applied to patent claim
-      language)
-- [ ] **Comparison/novelty-assessment agent** — element-by-element, RAG-grounded overlap
-      assessment vs. the disclosure, every claim citing specific source text
-- [ ] **Risk-report/critic agent** — aggregate into a structured FTO-risk report; deterministic
-      citation-verification guard re-checks every quoted claim string genuinely appears in the
-      source patent (reuse the hallucination-guard pattern from Exporter Crawl's
-      `rank_engine.py`)
-- [ ] Orchestrate agents via LangGraph or a hand-rolled bounded state machine
+- [x] **Disclosure-parser agent** — `agents/disclosure_parser.py`.
+- [x] **Prior-art search agent** — `agents/search_agent.py`; adaptive query expansion is a
+      bounded 3-query sequence (medium/broad/narrow) built from the disclosure-parser's
+      output, not another LLM call — see log.md for why.
+- [x] **Claims-parser agent** — `agents/claims_parser.py`.
+- [x] **Comparison/novelty-assessment agent** — `agents/comparison_agent.py`.
+- [x] **Risk-report/critic agent** — `agents/risk_report_agent.py`; citation-verification
+      guard is its own deterministic module, `agents/citation_guard.py` (no LLM).
+- [x] Orchestrate agents — `agents/orchestrator.py`, a hand-rolled bounded sequence (not
+      LangGraph — see that module's docstring for why).
 
 ## 3. API layer
-- [ ] FastAPI: `POST /disclosure/analyze` → job id
-- [ ] `GET /jobs/{id}` for status
-- [ ] `GET /report/{id}` for the FTO report
+- [x] FastAPI: `POST /disclosure/analyze` → job id
+- [x] `GET /jobs/{id}` for status
+- [x] `GET /report/{id}` for the FTO report — returns a real `FTOReport`.
 
 ## 4. MLOps
-- [ ] Docker/docker-compose: app + vector DB + optional local embedding server
+- [x] Docker/docker-compose: app + vector DB — `Dockerfile`/`docker-compose.yml`, verified
+      end-to-end. (Skipped the "optional local embedding server" — embedding already runs
+      in-process, so a dedicated service has no consumer.)
 - [ ] **Airflow**: scheduled incremental ingestion DAG for new patents in the target CPC classes
       (download → clean → chunk → embed → index)
 - [ ] **MLflow**: track retrieval/reranking experiments (embedding models, chunking strategies)
@@ -50,7 +56,8 @@ section 4 for full architecture rationale.
 - [ ] **DVC**: version the ingested patent corpus subset and embedding indices
 
 ## 5. Evaluation (the differentiator — real ground truth)
-- [ ] Build an eval set from patents with known examiner-cited prior art
+- [ ] Build an eval set from patents with known examiner-cited prior art — now unblocked:
+      149/291 ingested patents carry real examiner (`SEA`-category) citations.
 - [ ] Run the search+comparison pipeline on those disclosures, score **recall@k** against the
       actual examiner citations — a rigorous, defensible eval design, not just an LLM-judge score
 
@@ -59,11 +66,15 @@ section 4 for full architecture rationale.
 - [ ] Explicitly trace the citation-verification guard as a checked step
 
 ## 7. Testing
-- [ ] pytest for the claims-parser's structured output
-- [ ] pytest for the citation-verification guard
-- [ ] pytest for chunking logic
-- [ ] Integration test over a small fixed patent set with a mocked LLM
+- [x] pytest for the claims-parser's structured output — `tests/test_claims_parser.py`.
+- [x] pytest for the citation-verification guard — `tests/test_citation_guard.py`.
+- [x] pytest for chunking logic — `tests/test_chunking.py`.
+- [x] Integration test over a small fixed patent set with a mocked LLM —
+      `tests/test_orchestrator.py`'s non-live tests run the full orchestrator over the
+      fixture corpus with every agent function mocked; per-agent unit tests
+      (`test_disclosure_parser.py` etc.) additionally mock at the Groq-client level. 145
+      tests total (`pytest -m slow`/`-m integration` opt-in for real models/live APIs).
 
 ## 8. MCP
-- [ ] Expose `search-prior-art` as an MCP tool
-- [ ] Expose `assess-novelty` as an MCP tool
+- [x] Expose `search-prior-art` as an MCP tool — `mcp_server.py`.
+- [x] Expose `assess-novelty` as an MCP tool — `mcp_server.py`.
