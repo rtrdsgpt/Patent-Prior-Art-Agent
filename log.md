@@ -303,3 +303,60 @@ spinning up a real Chroma server just to test a branch of config logic.
 
 4 new tests in `tests/test_pipeline.py`. Full suite: 55 passed (~110s, dominated by the
 `slow` model-loading tests as before).
+
+## 2026-08-16 — Credentials unblocked: real BigQuery ingestion client
+
+User completed both remaining GCP steps: `gcloud auth application-default login`
+(interactive browser flow, run in their own terminal per my instructions) and confirmed
+billing was enabled. Verified independently before writing any ingestion code:
+
+- `gcloud auth application-default print-access-token` — succeeded, ADC live.
+- `gcloud billing projects describe patent-prior-art-project` — `billingEnabled: true`.
+- Ran a real `bq query` against `patents-public-data.patents.publications` filtered to
+  `G06N3%` CPC codes — got back real patents (e.g. "Synapse element and neuromorphic
+  processor including synapse element"). This is the point where BigQuery ingestion stopped
+  being paused and became something I could actually build and test, not just write.
+- Checked the live table schema with `bq show --schema` *before* writing the ingestion
+  query, rather than assuming the field names from memory/docs. Confirmed
+  `title_localized`/`abstract_localized`/`claims_localized` are `RECORD REPEATED` with
+  `text`/`language` subfields (need `language = 'en'` filtering + `UNNEST`), `cpc` is
+  `RECORD REPEATED` with a `code` subfield (my first hand-typed test query got this wrong —
+  tried `ARRAY_LENGTH(cpc.code)` as if `cpc.code` were a flat array field, got "Cannot
+  access field code on a value with type ARRAY<STRUCT<...>>"; fixed by using
+  `EXISTS(SELECT 1 FROM UNNEST(cpc) AS c WHERE c.code LIKE ...)`), and `citation.category`
+  values match `CitationCategory`'s `EXA`/`APP` exactly as the initial-scaffolding schema
+  assumed.
+
+Added `src/patent_agent/ingestion/bigquery_client.py` (`fetch_patents()`), following the
+same `list[Patent]` return contract as `ingestion/fixtures.py` (see that module's log entry
+for why that contract was chosen up front). Design notes:
+
+- **`citation.category` maps to `OTHER` for anything that isn't `EXA`/`APP`.** The real
+  field has 11 possible values (search-report types, opposition, appeal, etc. — see the
+  field's own BigQuery description); `CitationCategory` only distinguishes examiner vs.
+  applicant citations because that's the only distinction the recall@k eval (section 5)
+  actually needs. Collapsing the rest to `OTHER` rather than modeling all 11 is deliberate
+  scope discipline, not laziness — nothing downstream needs finer granularity yet.
+- **Rows with no parseable claims are dropped during ingestion, not carried through as
+  patents with an empty claims list.** A patent this pipeline can't chunk into claims can't
+  be compared against a disclosure element-by-element later, so keeping it around would
+  just be dead weight that every downstream consumer has to defensively check for.
+- **`publication_date` malformed/zero values become `None`, not a raised error** — ingesting
+  300 patents at a time, a handful having a bad or missing date shouldn't fail the whole
+  batch over a field nothing in the pipeline treats as required.
+- Added `Settings.corpus_size` (default 300) — a new explicit cap distinct from the
+  retrieval-stage `*_top_k` settings, keeping BigQuery cost/time bounded per the "scope
+  discipline" already written into `docs/cpc_scope.md`.
+
+Created the real (gitignored) `.env` with `GCP_PROJECT_ID=patent-prior-art-project` —
+`GOOGLE_APPLICATION_CREDENTIALS` deliberately left blank since ADC (not a service-account
+key file) is what's configured; `.env.example`'s own comment already said ADC works in
+place of a key file.
+
+10 new tests in `tests/test_bigquery_client.py`: 9 fast unit tests against `_row_to_patent`/
+`_parse_publication_date` using hand-built `google.cloud.bigquery.table.Row` objects (no
+network) covering date parsing edge cases, missing-claims rows, citation category mapping,
+missing title/abstract; plus 1 `integration`-marked test that runs the real query against
+live BigQuery (skips itself if `GCP_PROJECT_ID` isn't configured, so the suite still runs
+clean for anyone without these credentials) and asserts the results are genuinely CPC-scoped
+US patents with parsed claims. Full suite: 65 passed.

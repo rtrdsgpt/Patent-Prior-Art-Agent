@@ -22,6 +22,9 @@ class Settings(BaseSettings):
 
     # Corpus scope — see docs/cpc_scope.md for why G06N3 was picked for the first slice
     target_cpc_class: str = "G06N3"
+    # Cap on patents pulled per ingestion run — keeps BigQuery cost/time bounded for the
+    # first working slice; see docs/cpc_scope.md's "scope discipline" section.
+    corpus_size: int = 300
 
     # Retrieval
     vector_store_backend: str = "chroma"
