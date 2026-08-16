@@ -951,3 +951,46 @@ nothing in the pipeline currently depends on seed-set stability across runs.
 short-circuit without querying, plus 2 live tests: a known real patent ID resolves
 correctly, an unknown ID returns empty rather than erroring). Full suite: 159 passed.
 
+## 2026-08-16 — OpenTelemetry tracing (todo.md section 6), and a background-thread bug
+
+Added `tracing.py` (`traced()` decorator, `get_tracer()`) and applied `@traced` to every
+pipeline stage: `disclosure_parser`, `search_agent`, `claims_parser`, `comparison_agent`,
+`risk_report_agent`, and the orchestrator's `run_fto_pipeline` itself as the root span (every
+stage below it nests automatically as a child, since `start_as_current_span` propagates
+context — one tree per pipeline run, not unconnected spans). `citation_guard.verify_citations`
+is explicitly decorated too and additionally sets `patent_id`/`num_comparisons_checked`/
+`citation_verified` as span attributes directly — todo.md specifically asks for the guard to
+be traced "as a checked step," so it gets attributes a plain pass/fail span wouldn't carry,
+not just the same generic treatment as the other stages.
+
+**Exports to the console (`ConsoleSpanExporter`), not a hosted Langfuse/OTLP backend** — no
+credentials for one, and this is real, inspectable tracing on its own; `opentelemetry-
+exporter-otlp-proto-grpc` is already in the dependency tree (pulled in transitively), so
+pointing at a real backend later is a one-line change, not a rewrite. Verified this isn't
+just a design claim by running `pytest -s` on `citation_guard`'s tests and reading the actual
+printed span JSON — confirmed the attributes were exactly what the code sets, not just that
+nothing crashed.
+
+**Real bug found running the full test suite (not the tracing tests specifically) right
+after wiring `@traced` into every agent:** a traceback on `ValueError: I/O operation on
+closed file` from `opentelemetry`'s internals, after the suite otherwise passed. Traced it to
+`BatchSpanProcessor`: it exports on a background thread on its own schedule, and that thread
+outlived pytest's captured-stdout lifecycle, then tried to write a batched flush to a stream
+that had already been closed at session teardown. Not a hypothetical — this reproduced
+every run once any `@traced` function got called anywhere in the suite. Fixed by switching to
+`SimpleSpanProcessor` (synchronous, no background thread, flushes each span immediately as it
+ends) — which is also just the *correct* choice here on its own merits, independent of the
+bug: `BatchSpanProcessor` exists to amortize the cost of network exporters (OTLP, Langfuse),
+and a console exporter that's already local/cheap gets no benefit from batching, only the
+downside of an extra thread with its own lifecycle to reason about. Reran the full suite
+twice after the fix to confirm the traceback was gone for good, not intermittent.
+
+**Testing approach:** `get_tracer()`/`_ensure_provider()` install a real, process-wide
+OpenTelemetry provider that (by API design) only meaningfully installs once — not something
+a test can cleanly swap out mid-suite to inject an assertable exporter. Rather than write
+tests that can't actually verify span content, `tests/test_tracing.py` monkeypatches
+`tracing.get_tracer` to point at a fully separate, test-local `TracerProvider` wired to an
+`InMemorySpanExporter`, so `traced()`'s actual behavior (span created with the right name,
+marked `OK`/`ERROR` correctly, exceptions still re-raised and recorded as span events, nested
+spans come out as real parent/child) is genuinely verified against recorded span data, not
+just "the wrapped function's return value passed through." 7 tests. Full suite: 166 passed.

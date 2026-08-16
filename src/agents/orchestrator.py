@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 
 from chromadb.api.models.Collection import Collection
+from opentelemetry import trace as otel_trace
 
 from agents.citation_guard import verify_citations
 from agents.claims_parser import parse_claim_elements
@@ -35,10 +36,12 @@ from agents.search_agent import search_prior_art
 from config.settings import Settings, get_settings
 from retrieval.bm25_index import BM25Index
 from schema import FTOReport, Patent
+from tracing import traced
 
 logger = logging.getLogger(__name__)
 
 
+@traced("fto_pipeline")
 def run_fto_pipeline(
     disclosure_text: str,
     bm25_index: BM25Index,
@@ -47,12 +50,18 @@ def run_fto_pipeline(
     client: RotatingGroqClient | None = None,
     settings: Settings | None = None,
 ) -> FTOReport:
-    """Run the full disclosure → FTO report pipeline end to end."""
+    """Run the full disclosure → FTO report pipeline end to end.
+
+    `@traced` makes this the root span for a run — every stage below uses
+    `start_as_current_span`, so they nest under it automatically as children, giving a
+    trace viewer one tree per pipeline run rather than unconnected spans.
+    """
     settings = settings or get_settings()
     client = client or build_groq_client(settings)
 
     disclosure = parse_disclosure(disclosure_text, client=client, settings=settings)
     candidates = search_prior_art(disclosure, bm25_index, embedding_collection, patents_by_id, settings=settings)
+    otel_trace.get_current_span().set_attribute("num_candidates", len(candidates))
 
     assessments = []
     for candidate in candidates:
@@ -67,4 +76,5 @@ def run_fto_pipeline(
         assessment = assess_novelty(disclosure, patent, claim_elements=claim_elements, client=client, settings=settings)
         assessments.append(verify_citations(assessment, patent))
 
+    otel_trace.get_current_span().set_attribute("num_assessments", len(assessments))
     return generate_risk_report(disclosure, assessments, client=client, settings=settings)

@@ -11,6 +11,7 @@ from agents.groq_client import RotatingGroqClient, build_groq_client
 from agents.groq_json import request_json
 from config.settings import Settings, get_settings
 from schema import InventionDisclosure
+from tracing import traced
 
 _SYSTEM_PROMPT = """You are a patent analyst extracting structured information from a free-text \
 invention disclosure. Respond with ONLY a JSON object (no prose, no markdown fences) with exactly \
@@ -26,6 +27,7 @@ class codes (e.g. "G06N3/08") this invention would likely be classified under, y
 guess based on the technical field."""
 
 
+@traced("disclosure_parser")
 def parse_disclosure(
     raw_text: str,
     client: RotatingGroqClient | None = None,

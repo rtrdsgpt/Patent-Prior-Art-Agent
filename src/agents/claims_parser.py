@@ -20,6 +20,7 @@ from agents.groq_client import RotatingGroqClient, build_groq_client
 from agents.groq_json import request_json
 from config.settings import Settings, get_settings
 from schema import Patent
+from tracing import traced
 
 _SYSTEM_PROMPT = """You are a patent claims analyst. You will be given one or more independent \
 patent claims. For each claim, break it into its discrete elements — the individual technical \
@@ -45,6 +46,7 @@ def _validate(parsed: dict, expected_claim_numbers: set[int]) -> dict[int, list[
     return result
 
 
+@traced("claims_parser")
 def parse_claim_elements(
     patent: Patent,
     client: RotatingGroqClient | None = None,

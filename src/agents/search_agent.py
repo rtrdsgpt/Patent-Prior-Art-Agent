@@ -18,6 +18,7 @@ from retrieval.bm25_index import BM25Index
 from retrieval.hybrid import hybrid_search
 from retrieval.reranker import rerank
 from schema import InventionDisclosure, Patent, SearchResult
+from tracing import traced
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ def _candidate_queries(disclosure: InventionDisclosure) -> list[str]:
     ]
 
 
+@traced("search_agent")
 def search_prior_art(
     disclosure: InventionDisclosure,
     bm25_index: BM25Index,

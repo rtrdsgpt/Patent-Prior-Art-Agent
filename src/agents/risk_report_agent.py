@@ -22,6 +22,7 @@ from __future__ import annotations
 from agents.groq_client import RotatingGroqClient, build_groq_client
 from config.settings import Settings, get_settings
 from schema import FTOReport, InventionDisclosure, NoveltyAssessment
+from tracing import traced
 
 _SYSTEM_PROMPT = """You are drafting the summary section of a patent freedom-to-operate (FTO) \
 risk report. You'll be given an invention disclosure and a list of candidate prior-art patents \
@@ -60,6 +61,7 @@ def _build_user_prompt(disclosure: InventionDisclosure, assessments: list[Novelt
     return f"Invention disclosure technical field: {disclosure.technical_field}\n\nCandidate assessments:\n{assessment_lines}"
 
 
+@traced("risk_report_agent")
 def generate_risk_report(
     disclosure: InventionDisclosure,
     assessments: list[NoveltyAssessment],

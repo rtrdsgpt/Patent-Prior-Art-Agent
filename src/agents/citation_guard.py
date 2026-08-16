@@ -20,23 +20,35 @@ instead of maintaining a narrower local version.
 from __future__ import annotations
 
 from grounded_evals import verify_citation as _lexical_citation_match
+from opentelemetry import trace as otel_trace
 
 from schema import NoveltyAssessment, Patent
+from tracing import traced
 
 
 def _claim_text(patent: Patent, claim_number: int) -> str | None:
     return next((c.text for c in patent.claims if c.claim_number == claim_number), None)
 
 
+@traced("citation_guard")
 def verify_citations(assessment: NoveltyAssessment, patent: Patent) -> NoveltyAssessment:
     """Return a copy of `assessment` with `citation_verified` set: `True` only if every
     comparison's `cited_claim_text` genuinely matches (exactly or near-exactly — see
     `grounded_evals.verify_citation`) the claim it names; `False` if any comparison fails,
     including citing a claim number that doesn't exist on `patent` at all. Vacuously `True`
     for an assessment with no comparisons — nothing to fail.
+
+    Explicitly traced as its own checked step (todo.md section 6's specific ask, not folded
+    into the comparison agent's span) — the span carries `patent_id`, how many comparisons
+    were checked, and the resulting `citation_verified` value, so a trace viewer can see this
+    guard actually ran and what it decided, not just that "some span" happened.
     """
     if assessment.candidate_patent_id != patent.patent_id:
         raise ValueError(f"Assessment is for patent {assessment.candidate_patent_id!r}, not {patent.patent_id!r}")
+
+    span = otel_trace.get_current_span()
+    span.set_attribute("patent_id", patent.patent_id)
+    span.set_attribute("num_comparisons_checked", len(assessment.element_comparisons))
 
     all_verified = True
     for comparison in assessment.element_comparisons:
@@ -45,4 +57,5 @@ def verify_citations(assessment: NoveltyAssessment, patent: Patent) -> NoveltyAs
             all_verified = False
             break
 
+    span.set_attribute("citation_verified", all_verified)
     return assessment.model_copy(update={"citation_verified": all_verified})

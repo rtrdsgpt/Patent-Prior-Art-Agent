@@ -16,6 +16,7 @@ from agents.groq_client import RotatingGroqClient, build_groq_client
 from agents.groq_json import request_json
 from config.settings import Settings, get_settings
 from schema import ClaimElementComparison, InventionDisclosure, NoveltyAssessment, Patent
+from tracing import traced
 
 _SYSTEM_PROMPT = """You are a patent comparison analyst performing a freedom-to-operate \
 element-by-element overlap assessment. You will be given a list of disclosure elements and a \
@@ -81,6 +82,7 @@ def _validate(parsed: dict, patent_id: str, disclosure_elements: list[str], vali
     return comparisons
 
 
+@traced("comparison_agent")
 def assess_novelty(
     disclosure: InventionDisclosure,
     patent: Patent,
