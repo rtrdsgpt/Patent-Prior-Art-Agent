@@ -1,5 +1,11 @@
 from api.jobs import JobStatus, JobStore
-from schema import SearchResult
+from schema import FTOReport, InventionDisclosure
+
+FAKE_REPORT = FTOReport(
+    disclosure=InventionDisclosure(raw_text="x", technical_field="x", key_elements=[], candidate_cpc_classes=[]),
+    assessments=[],
+    summary="summary",
+)
 
 
 def test_create_job_starts_pending():
@@ -21,14 +27,13 @@ def test_mark_running_updates_status():
     assert store.get(job.job_id).status == JobStatus.RUNNING
 
 
-def test_mark_completed_sets_status_and_candidates():
+def test_mark_completed_sets_status_and_report():
     store = JobStore()
     job = store.create("x")
-    candidates = [SearchResult(patent_id="P1", score=0.9, retrieval_method="reranked")]
-    store.mark_completed(job.job_id, candidates)
+    store.mark_completed(job.job_id, FAKE_REPORT)
     updated = store.get(job.job_id)
     assert updated.status == JobStatus.COMPLETED
-    assert updated.candidate_patents == candidates
+    assert updated.report == FAKE_REPORT
 
 
 def test_mark_failed_sets_status_and_error():

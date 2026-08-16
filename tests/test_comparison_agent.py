@@ -158,6 +158,25 @@ def test_assess_novelty_retries_when_a_disclosure_element_is_missing():
     assert len(result.element_comparisons) == 2
 
 
+def test_assess_novelty_includes_claim_elements_as_reference_context():
+    client = _client_returning(VALID_RESPONSE)
+
+    assess_novelty(DISCLOSURE, PATENT, claim_elements={1: ["doing X", "doing Y"]}, client=client)
+
+    user_prompt = client.chat_completion.call_args.kwargs["messages"][1]["content"]
+    assert "pre-structured breakdown" in user_prompt
+    assert "doing X" in user_prompt
+
+
+def test_assess_novelty_omits_reference_context_when_claim_elements_not_given():
+    client = _client_returning(VALID_RESPONSE)
+
+    assess_novelty(DISCLOSURE, PATENT, client=client)
+
+    user_prompt = client.chat_completion.call_args.kwargs["messages"][1]["content"]
+    assert "pre-structured breakdown" not in user_prompt
+
+
 def test_assess_novelty_citation_verified_left_unset():
     client = _client_returning(VALID_RESPONSE)
     result = assess_novelty(DISCLOSURE, PATENT, client=client)

@@ -1,7 +1,9 @@
+import json
+
 import pytest
 
 from mcp_server import mcp
-from schema import SearchResult
+from schema import NoveltyAssessment, SearchResult
 
 pytestmark = pytest.mark.anyio
 
@@ -11,7 +13,7 @@ def anyio_backend():
     return "asyncio"
 
 
-async def test_search_prior_art_is_registered():
+async def test_tools_are_registered():
     tools = await mcp.list_tools()
     assert {t.name for t in tools} == {"search_prior_art", "assess_novelty"}
 
@@ -33,8 +35,28 @@ async def test_search_prior_art_respects_top_k(monkeypatch):
     assert len(result.structured_content["result"]) == 2
 
 
-async def test_assess_novelty_raises_not_implemented_tool_error():
+async def test_assess_novelty_returns_assessment(monkeypatch):
+    assessment = NoveltyAssessment(candidate_patent_id="US10000001B2", element_comparisons=[], citation_verified=True)
+    monkeypatch.setattr("mcp_server.run_novelty_assessment", lambda disclosure_text, candidate_patent_id: assessment)
+
+    result = await mcp.call_tool("assess_novelty", {"disclosure_text": "x", "candidate_patent_id": "US10000001B2"})
+
+    assert result.is_error is False
+    # Unlike search_prior_art's list[dict] return, a bare `dict` return doesn't get
+    # auto-wrapped into structured_content by this MCP SDK version -- read the JSON out of
+    # the text content instead (confirmed by inspecting a real CallToolResult directly).
+    body = json.loads(result.content[0].text)
+    assert body["candidate_patent_id"] == "US10000001B2"
+    assert body["citation_verified"] is True
+
+
+async def test_assess_novelty_raises_tool_error_for_unknown_patent(monkeypatch):
     from mcp.server.mcpserver.exceptions import ToolError
 
-    with pytest.raises(ToolError, match="not yet implemented"):
-        await mcp.call_tool("assess_novelty", {"disclosure_text": "x", "candidate_patent_id": "US10000001B2"})
+    def _raise(disclosure_text, candidate_patent_id):
+        raise KeyError(candidate_patent_id)
+
+    monkeypatch.setattr("mcp_server.run_novelty_assessment", _raise)
+
+    with pytest.raises(ToolError, match="No candidate patent"):
+        await mcp.call_tool("assess_novelty", {"disclosure_text": "x", "candidate_patent_id": "does-not-exist"})

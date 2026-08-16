@@ -39,10 +39,18 @@ Respond with ONLY a JSON object of this shape:
 Include exactly one entry per disclosure element you were given."""
 
 
-def _build_user_prompt(disclosure: InventionDisclosure, independent_claims) -> str:
+def _build_user_prompt(disclosure: InventionDisclosure, independent_claims, claim_elements: dict[int, list[str]] | None) -> str:
     elements_text = "\n".join(f"- {e}" for e in disclosure.key_elements)
     claims_text = "\n\n".join(f"Claim {c.claim_number}: {c.text}" for c in independent_claims)
-    return f"Disclosure elements:\n{elements_text}\n\nCandidate patent's independent claims:\n\n{claims_text}"
+
+    prompt = f"Disclosure elements:\n{elements_text}\n\nCandidate patent's independent claims:\n\n{claims_text}"
+    if claim_elements:
+        # claims_parser.py's pre-structured elements, included as a reasoning aid only —
+        # cited_claim_text must still be quoted from the raw claim text above, not from
+        # these (possibly paraphrased) elements. See comparison_agent.py's module docstring.
+        structured = "\n".join(f"Claim {n}: " + "; ".join(elements) for n, elements in sorted(claim_elements.items()))
+        prompt += f"\n\nFor reference, here is a pre-structured breakdown of each claim's elements (use this to help reason, but still quote cited_claim_text from the claim text above):\n{structured}"
+    return prompt
 
 
 def _validate(parsed: dict, patent_id: str, disclosure_elements: list[str], valid_claim_numbers: set[int]) -> list[ClaimElementComparison]:
@@ -76,10 +84,16 @@ def _validate(parsed: dict, patent_id: str, disclosure_elements: list[str], vali
 def assess_novelty(
     disclosure: InventionDisclosure,
     patent: Patent,
+    claim_elements: dict[int, list[str]] | None = None,
     client: RotatingGroqClient | None = None,
     settings: Settings | None = None,
 ) -> NoveltyAssessment:
     """Compare every element of `disclosure` against `patent`'s independent claims.
+
+    `claim_elements` is `claims_parser.parse_claim_elements(patent)`'s output, passed in
+    (not called here) so the orchestrator controls the call — this agent doesn't reach out
+    and fetch its own dependencies. `None`/`{}` is fine; the comparison still runs directly
+    off `Claim.text`, just without the pre-structured reasoning aid.
 
     Returns an assessment with no comparisons (not an error) if either side has nothing to
     compare — no disclosure elements extracted, or the patent has no independent claims.
@@ -97,7 +111,7 @@ def assess_novelty(
         client,
         settings,
         system_prompt=_SYSTEM_PROMPT,
-        user_prompt=_build_user_prompt(disclosure, independent_claims),
+        user_prompt=_build_user_prompt(disclosure, independent_claims, claim_elements),
         validate=lambda parsed: _validate(parsed, patent.patent_id, disclosure.key_elements, valid_claim_numbers),
     )
 

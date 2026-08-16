@@ -1,8 +1,8 @@
 """FastAPI layer — todo.md section 3.
 
 `POST /disclosure/analyze` → job id, `GET /jobs/{id}` → status, `GET /report/{id}` → FTO
-report. The report route is honest about what's not built yet rather than faking a report;
-see `pipeline.py`'s module docstring for why.
+report. Now that all five section-2 agents exist, a completed job holds a real `FTOReport` —
+see `pipeline.py`'s `run_fto_analysis`.
 """
 
 from __future__ import annotations
@@ -13,7 +13,8 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel
 
 from api.jobs import Job, JobStore
-from api.pipeline import run_prior_art_search
+from api.pipeline import run_fto_analysis
+from schema import FTOReport
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +33,8 @@ class AnalyzeResponse(BaseModel):
 def _run_job(job_id: str, disclosure_text: str) -> None:
     job_store.mark_running(job_id)
     try:
-        candidates = run_prior_art_search(disclosure_text)
-        job_store.mark_completed(job_id, candidates)
+        report = run_fto_analysis(disclosure_text)
+        job_store.mark_completed(job_id, report)
     except Exception as exc:  # noqa: BLE001 - a job failure must never crash the background task silently
         logger.exception("Job %s failed", job_id)
         job_store.mark_failed(job_id, str(exc))
@@ -61,8 +62,8 @@ def get_job(job_id: str) -> Job:
     return _get_job_or_404(job_id)
 
 
-@app.get("/report/{job_id}")
-def get_report(job_id: str):
+@app.get("/report/{job_id}", response_model=FTOReport)
+def get_report(job_id: str) -> FTOReport:
     job = _get_job_or_404(job_id)
 
     if job.status in ("pending", "running"):
@@ -70,16 +71,4 @@ def get_report(job_id: str):
     if job.status == "failed":
         raise HTTPException(status_code=500, detail=f"Job {job_id} failed: {job.error}")
 
-    # job.status == "completed": search succeeded, but the claims-parser/comparison/
-    # risk-report agents (todo.md section 2) aren't built yet, so there is no FTOReport to
-    # return. 501, not a fabricated report — see pipeline.py.
-    raise HTTPException(
-        status_code=501,
-        detail={
-            "message": (
-                "Full FTO report generation requires the claims-parser, comparison, and "
-                "risk-report agents (todo.md section 2), which aren't built yet."
-            ),
-            "candidate_patents": [c.model_dump(mode="json") for c in job.candidate_patents],
-        },
-    )
+    return job.report

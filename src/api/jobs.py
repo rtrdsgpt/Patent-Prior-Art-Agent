@@ -14,9 +14,9 @@ from datetime import datetime, timezone
 from enum import Enum
 from threading import Lock
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from schema import SearchResult
+from schema import FTOReport
 
 
 class JobStatus(str, Enum):
@@ -31,7 +31,7 @@ class Job(BaseModel):
     status: JobStatus
     disclosure_text: str
     created_at: datetime
-    candidate_patents: list[SearchResult] = Field(default_factory=list)
+    report: FTOReport | None = None
     error: str | None = None
 
 
@@ -63,11 +63,11 @@ class JobStore:
         with self._lock:
             self._jobs[job_id].status = JobStatus.RUNNING
 
-    def mark_completed(self, job_id: str, candidate_patents: list[SearchResult]) -> None:
+    def mark_completed(self, job_id: str, report: FTOReport) -> None:
         with self._lock:
             job = self._jobs[job_id]
             job.status = JobStatus.COMPLETED
-            job.candidate_patents = candidate_patents
+            job.report = report
 
     def mark_failed(self, job_id: str, error: str) -> None:
         with self._lock:
