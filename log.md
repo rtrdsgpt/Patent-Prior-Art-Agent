@@ -531,3 +531,49 @@ assumed") but wasn't actually checked against live data — it was checked again
 populated. The fix was cheap once found (one BigQuery grouping query, then a small mapping
 change), but finding it required actually inspecting ingested output rather than treating
 "ingestion ran without an error" as "ingestion is correct."
+
+## 2026-08-16 — Groq credentials landed: rotating multi-key client
+
+User pasted a `GROQ_API_KEY` value into `.env` that turned out to be five comma-separated
+keys, not one — consistent with their earlier ask (mid-session) about copying "the groq keys
+(multiple)" from other projects. Rather than silently use only the first and leave four idle,
+asked how they wanted the multi-key situation handled; they chose key rotation on rate-limit
+over "just use the first."
+
+**Why rotation is a real requirement here, not gold-plating:** Groq's free tier has fairly
+tight per-key rate limits, and todo.md's agent pipeline (section 2) will make several LLM
+calls per job across multiple stages (disclosure-parser → comparison → risk-report, at
+minimum) — a single free-tier key would throttle a multi-agent pipeline quickly once real
+usage starts, and the user specifically has five keys available for exactly this reason.
+
+Added `Settings.groq_api_keys` (a property parsing the comma-separated `groq_api_key` field —
+kept the single-string field name so `.env`'s `GROQ_API_KEY=` stays one plain env var, not a
+JSON-array env var pydantic-settings would otherwise expect) and
+`agents/groq_client.py`'s `RotatingGroqClient`: wraps one `groq.Groq` client per key, catches
+`groq.RateLimitError` specifically (not a bare `except Exception`, since only a 429 means
+"try a different key" — any other error is a real failure that rotating keys wouldn't fix),
+and rotates to the next key, bounded to one attempt per configured key (same bounded-retry
+discipline as todo.md's note about the search agent's query-expansion retries). Rotation
+state (`_current`) is sticky across calls, not reset per call, so once an earlier key is
+exhausted, later calls start from wherever rotation left off instead of re-hitting it.
+
+**Verified against the live Groq API, not just the mocked rotation logic:** called
+`models.list()` first to see what's actually available rather than guessing a model name —
+picked `llama-3.3-70b-versatile`, a well-established model with reliable JSON-mode support,
+over newer options in the list (`openai/gpt-oss-120b`, `qwen/qwen3.6-27b`) that I have no
+track record with for structured-extraction tasks, which is what the disclosure-parser/
+claims-parser agents will need. Then ran one real `chat_completion()` call through
+`RotatingGroqClient` end-to-end and confirmed a real response came back — same "don't trust
+it until it's exercised for real" standard applied to BigQuery and Docker earlier in this
+session.
+
+6 unit tests (`tests/test_groq_client.py`, `Groq` class monkeypatched, a hand-built
+`httpx.Response`/`RateLimitError` to simulate a 429 without a network call) covering: single
+key with no rate limit, rotation on rate-limit, exhausting all keys raises
+`NoAvailableGroqKeyError`, rotation state stays sticky across separate calls, empty key list
+rejected at construction, `build_groq_client()` reads `Settings` correctly. Plus 1
+`integration`-marked live test. Full suite: 84 passed.
+
+Credentials are now fully unblocked (BigQuery *and* Groq) — the next real todo.md work is
+section 2's actual agents (disclosure-parser, search, claims-parser, comparison,
+risk-report), which is the biggest remaining chunk of the project.

@@ -13,8 +13,21 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # LLM
+    # LLM — comma-separated if multiple keys are available. Groq's free tier has fairly
+    # tight per-key rate limits, and the agent pipeline (todo.md section 2) makes several
+    # LLM calls per job across multiple stages, so `agents/groq_client.py` rotates across
+    # all configured keys on a 429 rather than using only the first.
     groq_api_key: Optional[str] = None
+
+    @property
+    def groq_api_keys(self) -> list[str]:
+        if not self.groq_api_key:
+            return []
+        return [key.strip() for key in self.groq_api_key.split(",") if key.strip()]
+
+    # Confirmed available via a live `models.list()` call against the configured keys
+    # before picking a default — see log.md.
+    groq_model: str = "llama-3.3-70b-versatile"
 
     # BigQuery / Google Patents Public Data
     gcp_project_id: Optional[str] = None
