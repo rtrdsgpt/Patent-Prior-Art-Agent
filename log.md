@@ -56,3 +56,39 @@ pattern, then `pip install -e . --no-deps`. `pytest` now collects and passes all
 tests. Logging this because it's a real gap in what was "done" in the initial commit — the
 tests existed but were not actually runnable by a fresh clone + `pip install -r
 requirements-dev.txt` + `pytest`, which is what the README's own Setup section promises.
+
+## 2026-08-16 — Mid-session: user asked me to copy a Groq key from a sibling project's `.env`
+
+The user asked whether I could copy Groq API keys out of the `.env` files of other projects
+in the parent `Projects/` directory. The sandbox's auto-mode classifier blocked the shell
+command that would have grepped those sibling `.env` files, even with the key values masked
+in the output. I did not attempt a workaround (e.g. reading the files a different way) —
+the classifier exists specifically to stop an agent from reaching into unrelated projects'
+secrets on its own initiative, and "the user asked for it mid-turn" isn't the same as a
+durable, explicit permission grant for that class of action. Explained this to the user and
+asked them to either paste the key directly or explicitly name the sibling project/loosen
+the Bash permission, and continued with the non-blocked work in the meantime. No credentials
+were available by the end of this entry, so BigQuery ingestion and the Groq-backed agents
+remain paused as decided above.
+
+## 2026-08-16 — Built the fixture corpus + loader (stand-in for BigQuery ingestion)
+
+With real BigQuery ingestion blocked on credentials, hand-built `tests/fixtures/sample_patents.json`:
+8 patents in the `G06N3` neighborhood (dropout, CNN+augmentation, LSTM sequence modeling,
+attention/seq2seq, batch normalization, GAN, pruning/compression, federated learning), each
+with realistic multi-claim text and a mix of `EXA`/`APP` citations between them so the corpus
+can later exercise both hybrid retrieval (semantically related but lexically different patents,
+e.g. the GAN patent citing the batch-norm patent) and the recall@k eval harness (section 5)
+once real data replaces it.
+
+Added `src/patent_agent/ingestion/fixtures.py` (`load_fixture_patents()`) rather than reading
+the JSON ad hoc from each retrieval module. Deliberately returns the same `list[Patent]` shape
+the real `bigquery_client.py` will return, so retrieval/indexing code written against this
+fixture loader doesn't need to change when live BigQuery access lands — only the call site
+that produces `list[Patent]` changes, not what anything does with them. This is the same
+reasoning as the CPC-scope doc's point about not letting infrastructure gaps leak into the
+pipeline's interfaces.
+
+6 new tests in `tests/test_fixtures.py` (claim parsing per patent, independent-claim
+detection, `EXA` vs `APP` citation-category filtering via `Patent.examiner_cited_patent_ids`,
+and that the loader is cached). Full suite: 16 passed.

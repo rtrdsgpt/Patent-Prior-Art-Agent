@@ -1,0 +1,93 @@
+[
+  {
+    "patent_id": "US10000001B2",
+    "title": "Method for training a neural network using dropout regularization",
+    "abstract": "A method for training a neural network includes randomly deactivating a subset of neurons during each training pass to reduce overfitting, and updating the remaining weights using backpropagation.",
+    "cpc_codes": ["G06N3/08", "G06N3/04"],
+    "assignees": ["Deepmind Technologies"],
+    "publication_date": "2015-06-16",
+    "claims_text": "1. A computer-implemented method for training a neural network, comprising:\nreceiving a set of labeled training examples;\nduring a forward pass, randomly deactivating a subset of neurons of the neural network according to a dropout probability; and\nupdating a plurality of weights of the neural network using backpropagation, based only on the neurons that were not deactivated.\n\n2. The method of claim 1, wherein the dropout probability is between 0.2 and 0.5.\n\n3. The method of claim 1, further comprising scaling activations of remaining neurons at inference time to account for the dropout applied during training.\n\n4. A system comprising:\na memory storing a neural network; and\na processor configured to perform the method of claim 1.\n",
+    "citations": []
+  },
+  {
+    "patent_id": "US10000002B2",
+    "title": "Convolutional neural network training with regularization for image classification",
+    "abstract": "A convolutional neural network is trained on labeled image data using a combination of dropout regularization and data augmentation to improve classification accuracy on held-out images.",
+    "cpc_codes": ["G06N3/08", "G06N3/045"],
+    "assignees": ["Visionary AI Inc."],
+    "publication_date": "2017-03-02",
+    "claims_text": "1. A method for training a convolutional neural network for image classification, comprising:\nreceiving a set of labeled training images;\napplying one or more data augmentation transformations to the training images;\nprocessing the augmented images through a plurality of convolutional layers of the convolutional neural network;\nduring training, applying dropout regularization to at least one fully-connected layer of the convolutional neural network; and\nupdating weights of the convolutional neural network using backpropagation.\n\n2. The method of claim 1, wherein the data augmentation transformations comprise random cropping and horizontal flipping.\n\n3. The method of claim 1, wherein the dropout regularization applies a dropout probability of between 0.3 and 0.5 to the fully-connected layer.\n\n4. The method of claim 1, further comprising normalizing activations output by each convolutional layer using batch normalization prior to applying an activation function.\n",
+    "citations": [
+      {"cited_patent_id": "US10000001B2", "category": "EXA"}
+    ]
+  },
+  {
+    "patent_id": "US10000003B2",
+    "title": "Recurrent neural network for sequence modeling with long short-term memory units",
+    "abstract": "A recurrent neural network comprising long short-term memory (LSTM) units processes sequential input data, maintaining a cell state across time steps to model long-range dependencies.",
+    "cpc_codes": ["G06N3/044", "G06N3/08"],
+    "assignees": ["Sequence Labs LLC"],
+    "publication_date": "2016-11-22",
+    "claims_text": "1. A method for processing sequential data using a recurrent neural network, comprising:\nreceiving a sequence of input vectors;\nprocessing the sequence, one time step at a time, through a plurality of long short-term memory (LSTM) units, each LSTM unit maintaining a cell state and a hidden state;\nat each time step, computing an input gate, a forget gate, and an output gate to control updates to the cell state; and\ngenerating an output sequence based on the hidden states produced at each time step.\n\n2. The method of claim 1, wherein the forget gate determines a proportion of the cell state from a previous time step to retain.\n\n3. The method of claim 1, further comprising training the recurrent neural network using backpropagation through time.\n\n4. The method of claim 1, wherein the recurrent neural network comprises a stack of two or more layers of LSTM units.\n",
+    "citations": []
+  },
+  {
+    "patent_id": "US10000004B2",
+    "title": "Attention mechanism for neural machine translation",
+    "abstract": "A neural network for sequence-to-sequence translation computes attention weights over encoder hidden states at each decoding step, allowing the decoder to focus on relevant portions of the source sequence.",
+    "cpc_codes": ["G06N3/0455", "G06N3/044"],
+    "assignees": ["Sequence Labs LLC"],
+    "publication_date": "2019-01-15",
+    "claims_text": "1. A method for sequence-to-sequence translation using a neural network, comprising:\nencoding a source sequence into a plurality of encoder hidden states using a recurrent encoder network;\nat each decoding step, computing an attention weight for each of the plurality of encoder hidden states based on a current decoder hidden state;\ncomputing a context vector as a weighted sum of the encoder hidden states using the attention weights; and\ngenerating an output token at the decoding step based on the context vector and the current decoder hidden state.\n\n2. The method of claim 1, wherein computing the attention weight comprises applying a softmax function to a set of alignment scores.\n\n3. The method of claim 1, wherein the recurrent encoder network comprises a plurality of long short-term memory (LSTM) units.\n\n4. The method of claim 1, further comprising training the neural network end-to-end using backpropagation through time.\n",
+    "citations": [
+      {"cited_patent_id": "US10000003B2", "category": "EXA"}
+    ]
+  },
+  {
+    "patent_id": "US10000005B2",
+    "title": "Batch normalization for accelerating deep neural network training",
+    "abstract": "A method normalizes the inputs to each layer of a deep neural network using batch statistics computed over a mini-batch of training examples, reducing internal covariate shift and accelerating training.",
+    "cpc_codes": ["G06N3/08", "G06N3/04"],
+    "assignees": ["Deepmind Technologies"],
+    "publication_date": "2015-09-10",
+    "claims_text": "1. A method for training a deep neural network, comprising:\nreceiving a mini-batch of training examples;\nfor each of a plurality of layers of the deep neural network, computing a mean and a variance of the layer's input activations over the mini-batch;\nnormalizing the input activations of the layer using the computed mean and variance; and\nscaling and shifting the normalized activations using a pair of learned parameters prior to applying an activation function.\n\n2. The method of claim 1, further comprising, at inference time, normalizing activations using a running average of the mean and variance computed during training.\n\n3. The method of claim 1, wherein the deep neural network comprises a plurality of convolutional layers.\n\n4. The method of claim 1, wherein the learned parameters are updated using backpropagation jointly with the other weights of the deep neural network.\n",
+    "citations": []
+  },
+  {
+    "patent_id": "US10000006B2",
+    "title": "Generative adversarial network for synthetic image generation",
+    "abstract": "A generative adversarial network comprising a generator network and a discriminator network is trained jointly, with the generator learning to produce synthetic images that the discriminator cannot distinguish from real images.",
+    "cpc_codes": ["G06N3/0475", "G06N3/08"],
+    "assignees": ["Visionary AI Inc."],
+    "publication_date": "2018-07-19",
+    "claims_text": "1. A method for training a generative adversarial network, comprising:\ngenerating, using a generator neural network, a synthetic image from a random noise vector;\nclassifying, using a discriminator neural network, the synthetic image and a real image as either real or generated;\nupdating weights of the discriminator neural network to improve its ability to distinguish real images from synthetic images; and\nupdating weights of the generator neural network to reduce the discriminator's ability to distinguish its synthetic images from real images.\n\n2. The method of claim 1, wherein the generator neural network comprises a plurality of transposed convolutional layers.\n\n3. The method of claim 1, wherein updating the weights of the discriminator neural network and updating the weights of the generator neural network are performed in alternating steps.\n\n4. The method of claim 1, further comprising applying batch normalization to at least one layer of the generator neural network.\n",
+    "citations": [
+      {"cited_patent_id": "US10000005B2", "category": "EXA"},
+      {"cited_patent_id": "US10000002B2", "category": "APP"}
+    ]
+  },
+  {
+    "patent_id": "US10000007B2",
+    "title": "Neural network pruning for model compression",
+    "abstract": "A method for compressing a trained neural network identifies weights with magnitude below a threshold and removes them, then fine-tunes the remaining weights to recover accuracy lost during pruning.",
+    "cpc_codes": ["G06N3/082", "G06N3/08"],
+    "assignees": ["Edge Compute Corp"],
+    "publication_date": "2020-02-11",
+    "claims_text": "1. A method for compressing a trained neural network, comprising:\nidentifying a subset of weights of the trained neural network having a magnitude below a threshold value;\nsetting the identified subset of weights to zero to produce a pruned neural network; and\nfine-tuning the remaining, non-zero weights of the pruned neural network using backpropagation on a training dataset.\n\n2. The method of claim 1, wherein the threshold value is determined based on a target sparsity level for the pruned neural network.\n\n3. The method of claim 1, further comprising quantizing the remaining, non-zero weights to a reduced bit-width representation.\n\n4. The method of claim 1, wherein the trained neural network comprises a plurality of convolutional layers.\n",
+    "citations": [
+      {"cited_patent_id": "US10000001B2", "category": "EXA"}
+    ]
+  },
+  {
+    "patent_id": "US10000008B2",
+    "title": "Federated learning for training neural networks across distributed devices",
+    "abstract": "A central server coordinates training of a shared neural network across a plurality of client devices, each computing local weight updates on private data that are aggregated without transmitting the raw data.",
+    "cpc_codes": ["G06N3/098", "G06N3/08"],
+    "assignees": ["Edge Compute Corp"],
+    "publication_date": "2021-05-04",
+    "claims_text": "1. A method for training a neural network across a plurality of client devices, comprising:\ntransmitting a shared neural network to each of the plurality of client devices;\nat each client device, computing a local weight update by training the shared neural network on locally-stored training data using backpropagation;\nreceiving the local weight updates from the plurality of client devices at a central server; and\naggregating the local weight updates to produce an updated shared neural network.\n\n2. The method of claim 1, wherein aggregating the local weight updates comprises computing a weighted average based on a number of training examples at each client device.\n\n3. The method of claim 1, wherein the locally-stored training data is not transmitted from the client devices to the central server.\n\n4. The method of claim 1, further comprising repeating the transmitting, computing, receiving, and aggregating steps for a plurality of communication rounds.\n",
+    "citations": [
+      {"cited_patent_id": "US10000001B2", "category": "APP"}
+    ]
+  }
+]
