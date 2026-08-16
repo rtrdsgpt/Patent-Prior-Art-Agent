@@ -224,3 +224,39 @@ missing from the patent lookup are skipped rather than erroring, empty candidate
 suite: 41 passed, ~98s (dominated by loading the embedding + cross-encoder models across the
 `slow` tests — acceptable for now since nothing here is on a hot path yet, worth revisiting
 if the `slow` suite becomes a CI bottleneck later).
+
+## 2026-08-16 — FastAPI layer (todo.md section 3), honest about what's not built yet
+
+Added `src/patent_agent/api/` (`jobs.py`, `pipeline.py`, `app.py`): `POST
+/disclosure/analyze` → job id, `GET /jobs/{id}` → status + candidates, `GET /report/{id}` →
+FTO report.
+
+**Key decision: the report route returns 501 with the candidate list, not a fabricated
+report.** Only retrieval (section 1) is built; the disclosure-parser/comparison/risk-report
+agents (section 2) are paused pending the Groq key. A tempting shortcut here would be to
+stub those agents with hardcoded or trivial logic so `/report/{id}` "works" end-to-end for a
+demo. Deliberately didn't — a report-shaped response with no real novelty assessment behind
+it is worse than an honest 501, because it would look done and isn't; the whole point of
+this project (per todo.md/README) is that every claim in the report is grounded and
+verified, so a fake-grounded report is actively the wrong direction to cut a corner in.
+`/jobs/{id}` does return real candidate patents, though — that part is genuinely working
+(hybrid search + rerank over the corpus), just not the whole pipeline.
+
+**`run_prior_art_search()` uses the disclosure's raw text as the retrieval query directly**,
+not a structured extraction of it — because the disclosure-parser agent that would produce
+`technical_field`/`key_elements`/`candidate_cpc_classes` doesn't exist yet. Once it does,
+only the query-construction step changes; the retrieval call itself is already correct.
+
+**Design call: in-memory job store, not a database.** No multi-worker deployment exists yet,
+so persistence would be speculative. `JobStore` is thread-safe (a `Lock` around the dict)
+because FastAPI runs sync route handlers in a thread pool — concurrent requests are real
+even single-process. Indexes are built once per process via `lru_cache` on `_get_indexes()`,
+not per-request, since embedding a corpus is real work.
+
+18 new tests: `test_jobs.py` (6, pure `JobStore` logic) and `test_api.py` (6, via
+`TestClient`, with `run_prior_art_search` monkeypatched out — these test the API's
+contract/status codes, not retrieval accuracy, which is already covered by
+`test_hybrid.py`/`test_reranker.py`). Noticed but didn't chase: `starlette.testclient`
+warns that its `httpx`-based `TestClient` is deprecated in favor of a package called
+`httpx2` — real upstream package, but a test-infra-only concern with no production impact
+right now; not worth a new dependency for this yet. Full suite: 53 passed.
