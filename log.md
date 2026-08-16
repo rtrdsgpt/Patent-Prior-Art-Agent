@@ -403,3 +403,29 @@ Python versions — call `.value` explicitly wherever the string form leaves the
 Rebuilt the image and reran the same manual verification (including the `run_prior_art_search`-mocked GAN-patent case, to confirm a different retrieval ranking hits the same path
 correctly) after the fix.
 
+## 2026-08-16 — MCP tool exposure (todo.md section 8)
+
+Added `src/patent_agent/mcp_server.py` using the `mcp` package's `MCPServer` (a FastMCP-style
+API — this SDK version, 2.0.0, has it at `mcp.server.mcpserver.MCPServer` rather than the
+`mcp.server.fastmcp.FastMCP` path documented in older MCP SDK material, so I confirmed the
+actual class location, constructor, and `@mcp.tool()`/`call_tool()` signatures via `inspect`
+against the installed package rather than assuming from memory before writing anything).
+
+Two tools, same honesty principle as the `/report` API route: **`search_prior_art`** is real
+— it calls the same `run_prior_art_search()` the FastAPI layer uses, so it's genuinely
+backed by hybrid retrieval + reranking over the indexed corpus. **`assess_novelty`** raises
+`mcp.server.mcpserver.exceptions.ToolError` with a message naming exactly what it depends on
+(the paused comparison agent) rather than returning fabricated or empty novelty data.
+
+**Verified the error actually surfaces as an error, not a silently-swallowed one:**
+experimentally called `mcp.call_tool("assess_novelty", ...)` directly before writing the
+test and confirmed the `ToolError` propagates out as a real raised exception at this API
+level (the SDK's own `tool.run()` wraps and re-raises it) — so
+`test_assess_novelty_raises_not_implemented_tool_error` asserts `pytest.raises(ToolError,
+match=...)` rather than checking a result object's `is_error` flag, which is what
+`search_prior_art`'s success-path tests check instead (`CallToolResult.structured_content`).
+
+4 new tests in `tests/test_mcp_server.py`, using `pytest.mark.anyio` (the `anyio` pytest
+plugin ships with the `anyio` package already in the dependency tree — no separate test
+dependency needed) since `MCPServer.call_tool`/`list_tools` are async. Added `mcp>=2.0.0` to
+`requirements.txt`. Full suite: 69 passed.
