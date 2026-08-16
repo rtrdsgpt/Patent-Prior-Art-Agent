@@ -260,3 +260,46 @@ contract/status codes, not retrieval accuracy, which is already covered by
 warns that its `httpx`-based `TestClient` is deprecated in favor of a package called
 `httpx2` — real upstream package, but a test-infra-only concern with no production impact
 right now; not worth a new dependency for this yet. Full suite: 53 passed.
+
+## 2026-08-16 — Mid-session: user set up GCP (project, billing) for BigQuery access
+
+User installed `gcloud` (to `~/Downloads/google-cloud-sdk`, not on `PATH` by default —
+needed `export PATH="$HOME/Downloads/google-cloud-sdk/bin:$PATH"` to invoke it) and created
+`patent-prior-art-project`. Checked `gcloud services list --enabled` — BigQuery API was
+already enabled — but `gcloud billing projects describe patent-prior-art-project` showed
+`billingEnabled: false` and `gcloud billing accounts list` returned zero accounts. BigQuery
+requires billing enabled on the querying project even for free-tier usage against public
+datasets like Google Patents Public Data (query costs bill to the querying project, not the
+dataset's own project), so this was a real blocker, not a formality. Asked the user how they
+wanted to handle it rather than trying to script billing-account creation myself — linking a
+real billing account is exactly the kind of action-with-financial-consequence that should be
+the user's explicit, deliberate action, not something run on their behalf. They set it up
+themselves; re-checked afterward and confirmed `billingEnabled: true`.
+
+Still outstanding: Application Default Credentials (`gcloud auth application-default login`)
+— this needs an interactive browser flow, so it can't be run from here; gave the user the
+exact command to run in their own terminal. Once that's done, the real BigQuery ingestion
+client (`ingestion/bigquery_client.py`, section 0/1 of todo.md) can finally be built and
+actually tested against Google Patents Public Data, not just written and left unexecuted.
+
+## 2026-08-16 — Chroma client now configurable for docker-compose
+
+Before building `docker-compose.yml`, made the app layer actually able to talk to a Chroma
+*service* instead of only ever embedding Chroma in-process. Added `chroma_host`/`chroma_port`
+to `Settings` (both optional, default unset) and `_build_chroma_client()` in
+`api/pipeline.py`: uses `chromadb.HttpClient` when `chroma_host` is set (docker-compose sets
+it via env var to reach the sibling `chroma` container), otherwise falls back to
+`chromadb.PersistentClient` writing to `settings.chroma_persist_directory` — so a local
+(non-Docker) run of the API doesn't silently use an in-memory ephemeral store that forgets
+the corpus every restart, the way `embedding_index.build_embedding_index`'s own default
+still does for its unit tests.
+
+**Testing note:** `chromadb.HttpClient(...)` connects eagerly at construction time and
+raises `ValueError` immediately if nothing is listening — confirmed this experimentally
+before writing the test, rather than assuming lazy connection. So
+`test_build_chroma_client_uses_http_client_when_host_set` monkeypatches
+`chromadb.HttpClient` itself (asserting it's called with the right host/port) instead of
+spinning up a real Chroma server just to test a branch of config logic.
+
+4 new tests in `tests/test_pipeline.py`. Full suite: 55 passed (~110s, dominated by the
+`slow` model-loading tests as before).

@@ -14,9 +14,10 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+import chromadb
 from chromadb.api.models.Collection import Collection
 
-from patent_agent.config.settings import get_settings
+from patent_agent.config.settings import Settings, get_settings
 from patent_agent.ingestion.fixtures import load_fixture_patents
 from patent_agent.retrieval.bm25_index import BM25Index, build_bm25_index
 from patent_agent.retrieval.embedding_index import build_embedding_index
@@ -25,13 +26,23 @@ from patent_agent.retrieval.reranker import rerank
 from patent_agent.schema import Patent, SearchResult
 
 
+def _build_chroma_client(settings: Settings) -> chromadb.ClientAPI:
+    """`chroma_host` is set when Chroma runs as its own docker-compose service; otherwise
+    fall back to an on-disk persistent client so a local (non-Docker) run of the API
+    doesn't re-embed the corpus on every process restart."""
+    if settings.chroma_host:
+        return chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
+    return chromadb.PersistentClient(path=settings.chroma_persist_directory)
+
+
 @lru_cache
 def _get_indexes() -> tuple[BM25Index, Collection, dict[str, Patent]]:
     """Build both retrieval indexes once per process and reuse them across requests —
     embedding a corpus is real, non-trivial work, not something to redo per job."""
+    settings = get_settings()
     patents = load_fixture_patents()
     bm25_index = build_bm25_index(patents)
-    embedding_collection = build_embedding_index(patents)
+    embedding_collection = build_embedding_index(patents, settings=settings, client=_build_chroma_client(settings))
     patents_by_id = {p.patent_id: p for p in patents}
     return bm25_index, embedding_collection, patents_by_id
 

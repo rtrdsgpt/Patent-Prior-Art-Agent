@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     # Retrieval
     vector_store_backend: str = "chroma"
     chroma_persist_directory: str = "chroma_db"
+    # Set when Chroma runs as its own service (docker-compose) instead of embedded/local —
+    # see docker-compose.yml and api/pipeline.py's _build_chroma_client.
+    chroma_host: Optional[str] = None
+    chroma_port: int = 8000
     bm25_top_k: int = 50
     dense_top_k: int = 50
     hybrid_top_k: int = 20
