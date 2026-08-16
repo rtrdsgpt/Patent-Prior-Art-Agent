@@ -125,3 +125,35 @@ needs credentials it doesn't). Added a separate `slow` marker instead: no creden
 needed, just not fast enough to be a default unit test. `tests/test_embedding_index.py`
 (5 tests, real local model, no mocking) is marked `slow`; run explicitly with `pytest -m slow`.
 Full suite: 21 passed.
+
+## 2026-08-16 — Sparse (BM25) retrieval, and two bugs it surfaced
+
+Added `src/patent_agent/retrieval/bm25_index.py` using `rank_bm25.BM25Okapi`, same
+per-patent dedup contract as dense search (best-scoring claim wins) so the two result lists
+are directly combinable in the hybrid step. Simple regex tokenizer (`[a-z0-9]+` on
+lowercased text), applied identically at index and query time.
+
+**Failure 1 — `ZeroDivisionError` on an empty corpus.** `build_bm25_index([])` crashed
+inside `rank_bm25`'s own `__init__` (`self.avgdl = num_doc / self.corpus_size`, dividing by
+zero) rather than raising something meaningful. Not a hypothetical case — `bm25_search`
+needs to behave sanely before any real corpus is ingested, and an integration test wants to
+assert exactly this "empty index, empty results" behavior. Fixed by making `BM25Index.model`
+`Optional`, skipping the `BM25Okapi(...)` construction entirely when there are no chunks, and
+short-circuiting `bm25_search` to `[]` when `model is None`, rather than trying to work
+around `rank_bm25`'s internals.
+
+**Failure 2 — bad test fixture, not a code bug.** Wrote a "nonsense query returns no
+results" test using the query `"xyzzy nonexistent term plugh"`, expecting zero matches. It
+failed: `term` turned out to be a real token in the corpus, because the tokenizer splits on
+non-alphanumeric characters and "short-term" (from the LSTM patent's "long short-term
+memory") tokenizes to `short` + `term`. This is correct tokenizer behavior, not a bug — the
+test's assumption was wrong, not the code. Fixed the test query to use words with no
+substring overlap with anything in the fixture corpus (`"zzyzx qwibble florp vandelay"`).
+Worth remembering for later: BM25 term matching operates on tokens, so hyphenated compound
+terms can produce surprising partial matches — relevant if real patent claims contain a lot
+of hyphenated technical terminology (they do).
+
+7 new tests in `tests/test_bm25_index.py` (exact-terminology ranking, dedup, descending
+scores, retrieval_method tag, zero-score exclusion, top_k, empty index). Not marked `slow` —
+BM25 is pure Python/numpy over pre-tokenized text, no model download. Full suite (excluding
+`slow`): 23 passed.
