@@ -92,3 +92,36 @@ pipeline's interfaces.
 6 new tests in `tests/test_fixtures.py` (claim parsing per patent, independent-claim
 detection, `EXA` vs `APP` citation-category filtering via `Patent.examiner_cited_patent_ids`,
 and that the loader is cached). Full suite: 16 passed.
+
+## 2026-08-16 — Dense (embedding) retrieval over Chroma
+
+Added `src/patent_agent/retrieval/embedding_index.py`: embeds every claim chunk
+(`chunking.claim_to_index_chunk`) with a local `sentence-transformers` model and indexes it
+in Chroma, then `dense_search()` queries and collapses results to one `SearchResult` per
+patent (best-scoring claim wins) — search operates at the patent level even though the
+index is claim-level, since which specific claim tipped off a match is the comparison
+agent's job, not the search agent's.
+
+**Design call: explicit embedding-function wrapper instead of Chroma's default.** Chroma
+will happily embed for you with a built-in default function, but that default isn't
+necessarily the model named in `Settings.embedding_model` — wrapping `SentenceTransformer`
+explicitly as a `chromadb.EmbeddingFunction` keeps the actual embedding model a config
+decision (`settings.py`), not whatever Chroma ships with, and keeps ingestion/retrieval
+consistent if the model choice changes later.
+
+**Failure encountered: two `DeprecationWarning`s from Chroma** (`name()` and `get_config()`/
+`build_from_config()` not implemented on the custom embedding function) — Chroma's
+`EmbeddingFunction` base class expects these to be overridden for its serialization/registry
+system, and warns instead of erroring for now, but says this becomes required in a future
+version. Fixed by implementing all three rather than leaving the warnings, since silencing
+now and hitting a hard break on a routine `chromadb` bump later is a worse trade than four
+extra lines today.
+
+**Test marker decision:** the existing `integration` pytest marker was documented as
+"requires live BigQuery/vector-store access (real GCP credentials configured)" — but this
+test needs neither GCP nor BigQuery, just a local model download and an in-memory Chroma
+client. Reusing `integration` for it would have been misleading (a reader would assume it
+needs credentials it doesn't). Added a separate `slow` marker instead: no credentials
+needed, just not fast enough to be a default unit test. `tests/test_embedding_index.py`
+(5 tests, real local model, no mocking) is marked `slow`; run explicitly with `pytest -m slow`.
+Full suite: 21 passed.

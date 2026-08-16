@@ -15,7 +15,8 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "integration: requires live BigQuery/vector-store access (real GCP credentials configured)",
+    "integration: requires live BigQuery access (real GCP credentials configured)",
+    "slow: loads a real local model (embedding/reranker) or vector store; no credentials needed but not a fast unit test",
 ]
 
 [tool.ruff]
