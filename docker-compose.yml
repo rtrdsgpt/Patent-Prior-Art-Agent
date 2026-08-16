@@ -1,0 +1,23 @@
+services:
+  chroma:
+    image: chromadb/chroma:latest
+    volumes:
+      - chroma_data:/chroma/chroma
+    ports:
+      - "8100:8000" # host:container — container-to-container traffic uses the service name/8000 regardless
+
+  app:
+    build: .
+    depends_on:
+      - chroma
+    environment:
+      CHROMA_HOST: chroma
+      CHROMA_PORT: "8000"
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      TARGET_CPC_CLASS: ${TARGET_CPC_CLASS:-G06N3}
+    ports:
+      - "8080:8000"
+
+volumes:
+  chroma_data:

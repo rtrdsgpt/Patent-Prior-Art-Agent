@@ -66,7 +66,7 @@ def get_report(job_id: str):
     job = _get_job_or_404(job_id)
 
     if job.status in ("pending", "running"):
-        raise HTTPException(status_code=409, detail=f"Job {job_id} is not finished yet (status: {job.status})")
+        raise HTTPException(status_code=409, detail=f"Job {job_id} is not finished yet (status: {job.status.value})")
     if job.status == "failed":
         raise HTTPException(status_code=500, detail=f"Job {job_id} failed: {job.error}")
 

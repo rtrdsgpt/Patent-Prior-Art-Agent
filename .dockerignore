@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.DS_Store
+.env
+chroma_db/
+.git/
+docs/
+log.md
+todo.md
+README.md

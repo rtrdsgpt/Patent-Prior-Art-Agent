@@ -360,3 +360,46 @@ missing title/abstract; plus 1 `integration`-marked test that runs the real quer
 live BigQuery (skips itself if `GCP_PROJECT_ID` isn't configured, so the suite still runs
 clean for anyone without these credentials) and asserts the results are genuinely CPC-scoped
 US patents with parsed claims. Full suite: 65 passed.
+
+## 2026-08-16 — Docker/docker-compose (todo.md section 4, partial), and a real bug it caught
+
+Added `Dockerfile`, `docker-compose.yml`, `.dockerignore` — app + Chroma vector-DB service,
+the two pieces of section 4 that don't depend on paused credentials (Airflow's scheduled
+ingestion DAG and MLflow experiment tracking still need a real, repeated ingestion/retrieval
+workflow to actually track, so those stay deferred; see next entries for why they weren't
+just stubbed out anyway). Skipped the "optional local embedding server" mentioned in
+todo.md's phrasing — embedding already runs in-process via `sentence-transformers`
+(`embedding_index.py`), so a dedicated embedding server would be infrastructure with no
+current consumer, not a real requirement.
+
+**Dependency the Dockerfile needed that wasn't obvious until building it:**
+`ingestion/fixtures.py` resolves its corpus path relative to the repo root
+(`Path(__file__).resolve().parents[3] / "tests" / "fixtures"`), so the image needs
+`tests/fixtures/` copied in even though `tests/` is otherwise dev-only. Noting this as a
+known interim wart, not fixing it now: once real BigQuery ingestion is what the running app
+actually uses (see below — that's not wired up yet either), this dependency goes away on its
+own rather than needing a deliberate fix.
+
+**Did not stop at "docker build succeeded" — actually ran `docker compose up` and drove the
+API through it**, since a container that builds isn't the same as a container that works
+(model downloads at import time, network access to HuggingFace from inside the container,
+Chroma's own container startup, and `chroma_host`-based `HttpClient` wiring were all real
+things that could have failed at runtime even with a clean build). Posted a real disclosure
+("dropout during training") to `POST /disclosure/analyze` through the compose network,
+polled `/jobs/{id}` to `completed`, and confirmed the dropout patent (`US10000001B2`) ranked
+first — the same result the `slow` reranker test already established, but now verified
+through the actual deployed path, not just direct Python calls. Also confirmed `/report/{id}`
+returns the honest 501 with the candidate list through the real container.
+
+**Real bug found by this end-to-end run, not by unit tests:** `/report/{id}`'s 409 "job not
+finished yet" message rendered as `"status: JobStatus.RUNNING"` instead of `"status:
+running"` — `f"{job.status}"` on a `class JobStatus(str, Enum)` prints the enum's
+`repr`-style name in this Python version, not its string value, despite the class mixing in
+`str`. None of the unit tests caught this because none of them asserted on that particular
+error message's exact text; it only became visible reading real `curl` output against the
+running container. Fixed by using `job.status.value` explicitly in the f-string. Worth
+remembering generally: `str`-mixin enums don't reliably `str()`/format to their value across
+Python versions — call `.value` explicitly wherever the string form leaves the class.
+Rebuilt the image and reran the same manual verification (including the `run_prior_art_search`-mocked GAN-patent case, to confirm a different retrieval ranking hits the same path
+correctly) after the fix.
+
