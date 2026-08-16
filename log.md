@@ -183,3 +183,44 @@ first, single-ranker results are still included, descending scores, `top_k` resp
 retrieval_method tagging, empty input), plus 1 `slow`-marked end-to-end test building real
 BM25 + embedding indexes over the fixture corpus and checking the fused top result matches
 what both rankers should agree on. Full suite: 35 passed.
+
+*Correction to that commit message:* it said "closes todo.md section 1" — that was
+premature, the section also lists cross-encoder reranking, which wasn't done yet (see next
+entry). Noting the correction here rather than rewriting the pushed commit.
+
+## 2026-08-16 — Cross-encoder reranking, closing out todo.md section 1
+
+Added `src/patent_agent/retrieval/reranker.py` using `sentence-transformers`'
+`CrossEncoder` (`cross-encoder/ms-marco-MiniLM-L-6-v2`, already named in `Settings` from the
+initial scaffolding). This actually finishes todo.md section 1 (the previous commit's claim
+to have closed it was wrong — see correction above).
+
+**Why a reranking stage at all, given hybrid retrieval already ranks candidates:** BM25 and
+dense retrieval both score a query against a document independently and then compare
+vectors/scores (bi-encoder style) — necessary to scale to a full corpus, but structurally
+unable to model interaction between the specific query and a specific candidate's text. A
+cross-encoder feeds the (query, candidate) pair through the model jointly, which is far more
+accurate at judging true relevance but too slow to run over an entire corpus. So it only
+runs over the hybrid stage's already-narrowed candidate list (`hybrid_top_k`, currently 20) —
+narrowing a lot before the expensive step, not instead of it.
+
+**Design call: rerank against abstract + independent claims, not a single claim.** Hybrid
+retrieval's `SearchResult` is already deduplicated to one score per patent (see the dense/
+BM25 entries above for why), so by the time reranking runs there's no single "the chunk that
+matched" to rerank against — reconstructing that would mean threading per-claim provenance
+through the hybrid/RRF step just for this. Instead, reranking scores the query against each
+candidate patent's abstract plus its independent claims joined — independent claims because
+those define the actual scope of what's protected (dependent claims narrow an already-
+independent claim, so they add detail but not new scope), and the abstract because it's
+almost always the most on-topic single paragraph in the document. This is a real trade-off
+(a highly specific dependent claim can occasionally be the true match) worth remembering: if
+reranking precision on real data turns out weak, the fix is threading claim-level
+provenance through hybrid retrieval, not just swapping the reranker model.
+
+6 new `slow`-marked tests (real cross-encoder, no mocking): true-positive-over-distractors
+ranking (the actual point of reranking — does it fix a case dense/BM25 alone might not rank
+first), `rerank_top_k` respected, retrieval_method tagging, descending scores, candidates
+missing from the patent lookup are skipped rather than erroring, empty candidates. Full
+suite: 41 passed, ~98s (dominated by loading the embedding + cross-encoder models across the
+`slow` tests — acceptable for now since nothing here is on a hot path yet, worth revisiting
+if the `slow` suite becomes a CI bottleneck later).
