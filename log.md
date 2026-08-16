@@ -157,3 +157,29 @@ of hyphenated technical terminology (they do).
 scores, retrieval_method tag, zero-score exclusion, top_k, empty index). Not marked `slow` —
 BM25 is pure Python/numpy over pre-tokenized text, no model download. Full suite (excluding
 `slow`): 23 passed.
+
+## 2026-08-16 — Hybrid retrieval via Reciprocal Rank Fusion
+
+Added `src/patent_agent/retrieval/hybrid.py`, closing out todo.md section 1.
+
+**Decision: RRF over raw score combination.** BM25 scores and Chroma's distance-derived
+dense scores are on different, uncalibrated scales — BM25 scores are unbounded and corpus-
+size-dependent, the dense score here is a `1/(1+distance)` transform with its own range.
+Summing or weighting them directly would mean whichever ranker happens to produce larger
+raw numbers dominates the fused ranking, which isn't a real judgment about relevance, just
+an artifact of two different scoring functions' scales. RRF (`score = sum(1/(rrf_k + rank))`
+per ranker, `rrf_k=60` — the standard literature default) sidesteps this by only using each
+ranker's *rank order*, not its raw scores, which is why it's the standard choice for
+combining heterogeneous rankers rather than something bespoke here.
+
+`hybrid_search()` deliberately over-fetches each ranker to its own `bm25_top_k`/
+`dense_top_k` (already in `Settings` from the initial scaffolding) before fusing down to
+`hybrid_top_k` — fusing from a wider pool than the final cut is what lets a patent only one
+ranker ranked highly still surface in the fused list, instead of only rewarding consensus.
+
+13 new tests: 6 fast unit tests against `reciprocal_rank_fusion` directly (using synthetic
+`SearchResult` lists, no real indexes — verifying the fusion math itself: consensus ranks
+first, single-ranker results are still included, descending scores, `top_k` respected,
+retrieval_method tagging, empty input), plus 1 `slow`-marked end-to-end test building real
+BM25 + embedding indexes over the fixture corpus and checking the fused top result matches
+what both rankers should agree on. Full suite: 35 passed.
