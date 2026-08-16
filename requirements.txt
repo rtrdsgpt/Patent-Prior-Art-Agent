@@ -1,3 +1,11 @@
+# CPU-only torch build (sentence-transformers' real dependency) -- without this, `pip
+# install` on Linux (i.e. inside Docker) resolves the default CUDA-enabled torch wheel,
+# pulling in several GB of nvidia_* packages this project never uses (no GPU in these
+# containers). Confirmed how much this actually costs while building Dockerfile.airflow:
+# single nvidia_cublas/nvidia_cudnn wheels alone were 400-500MB+ each. Doesn't affect local
+# macOS dev (CPU/MPS wheels are already what resolves there), only Linux container builds.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 # Data models / settings
 pydantic>=2.7.0
 pydantic-settings>=2.3.0
@@ -28,5 +36,10 @@ mcp>=2.0.0
 # directory outside its build context; requirements-dev.txt's `-e ../grounded-evals`
 # (installed after this) takes over for local dev so edits there apply without a push.
 grounded-evals @ git+https://github.com/rtrdsgpt/grounded-evals.git
+
+# Experiment tracking (todo.md section 4) — experiment_tracking.py, imported by
+# agents/orchestrator.py (every report-generation run gets logged) and
+# evaluation/run_eval.py, so this is a real runtime dependency, not dev-only.
+mlflow>=3.0.0
 
 python-dotenv>=1.0.0

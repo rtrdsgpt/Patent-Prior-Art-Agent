@@ -994,3 +994,61 @@ tests that can't actually verify span content, `tests/test_tracing.py` monkeypat
 marked `OK`/`ERROR` correctly, exceptions still re-raised and recorded as span events, nested
 spans come out as real parent/child) is genuinely verified against recorded span data, not
 just "the wrapped function's return value passed through." 7 tests. Full suite: 166 passed.
+
+## 2026-08-16 — Ran the full recall@k eval for real, then DVC, then MLflow
+
+**Real recall@k numbers, finally, after the corpus-expansion and Chroma batch-size fixes
+landed:** `python -m evaluation.run_eval --k 10` over the full 1488-patent corpus, 811 eval
+cases (patents with at least one real examiner citation) —
+
+```
+Overall (against ALL real examiner citations, including ones outside this corpus):
+  recall@10: 0.087   MRR: 0.144   nDCG@10: 0.093
+In-corpus only (267 cases with a citation actually present in the index):
+  recall@10: 0.372   MRR: 0.438   nDCG@10: 0.330
+```
+
+This is the number the whole session's eval-design reasoning was building toward: the low
+"overall" figure is expected and not a red flag (this corpus can't contain most real prior
+art by design — see `docs/cpc_scope.md`), while 0.372 recall@10 / 0.438 MRR *in-corpus* is
+real evidence the hybrid-search-plus-reranking stack has genuine signal when the ground
+truth is actually reachable, not just noise. Took roughly 35 minutes end to end (indexing
+~31k claim chunks plus 811 real query+rerank passes) — a real, known cost of running the
+full eval, not sampled down for the "official" numbers; a `--sample-size` flag exists for
+faster dev-loop iteration but the numbers reported here and in `README.md` are the full run.
+
+**DVC (todo.md section 4).** `dvc init`, configured a local remote
+(`/Users/aritra/My Stuff/Projects/dvc-storage/patent-prior-art-agent` — a plain local
+directory, not cloud storage; no bucket/credentials exist for this project specifically, and
+DVC's local-remote mode is a real, complete implementation of the same
+add/push/pull/version workflow, just not network-backed) and `dvc add data/corpus.json`.
+Had to remove the blanket `data/` entry from the root `.gitignore` first — it was silently
+blocking git (and therefore DVC, which needs git to track the `.dvc` pointer file) from ever
+seeing `data/corpus.json.dvc`; `dvc add` failed outright with a clear error rather than
+silently doing nothing, which is what surfaced this. `dvc add` manages its own precise
+`data/.gitignore` for the real file from here on. `chroma_db/` versioning is set up the same
+way but deferred to whenever a persistent Chroma index actually exists on disk again (this
+session's dev loop mostly used the ephemeral `run_eval.py` path, which doesn't persist one).
+
+**MLflow (todo.md section 4).** Added `experiment_tracking.py` (`log_eval_run()`, wired into
+`evaluation/run_eval.py`; `log_report_run()`, wired into `agents/orchestrator.py` so every
+real `FTOReport` generation gets logged too) using a local SQLite-backed tracking store.
+**Real, version-specific finding, not assumed from older docs:** the plain `./mlruns`
+file-based tracking store most MLflow tutorials still show as the default is in maintenance
+mode as of the MLflow version this project installed, and raises
+`MlflowException` on first use unless explicitly opted back into — confirmed by actually
+running the logging code against a real MLflow install and reading the real exception, not
+by checking a changelog. Fixed by defaulting to `sqlite:///mlflow.db` instead (only when
+`MLFLOW_TRACKING_URI` isn't already set, so an explicitly configured environment — including
+the tests, which point it at an isolated per-test SQLite file — always wins). `log_report_run`
+wraps its own body in try/except: this is a pure observability side effect, and a
+`/disclosure/analyze` request should never fail because MLflow logging hit a problem;
+`log_eval_run` (a manual CLI-only path) doesn't get the same treatment, since a human running
+the CLI directly should see a logging failure, not have it silently swallowed.
+
+**Testing approach for `experiment_tracking.py`:** same principle as the Groq/tracing tests
+earlier — verify against the real library, not a mock of it. Tests point `MLFLOW_TRACKING_URI`
+at an isolated per-test SQLite file (`tmp_path`) and then read the logged run back via
+`mlflow.search_runs()` to assert on actual recorded params/metrics, not just that
+`mlflow.log_metric(...)` was called with the right arguments. 6 tests. 172 tests collected
+total (1 always-skips by design in this venv — see next entry).

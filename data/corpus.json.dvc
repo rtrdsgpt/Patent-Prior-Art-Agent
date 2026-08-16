@@ -1,0 +1,5 @@
+outs:
+- md5: 32e6ad0e4f105afb244007deb06c51bf
+  size: 21477672
+  hash: md5
+  path: corpus.json

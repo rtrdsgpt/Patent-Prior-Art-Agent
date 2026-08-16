@@ -6,12 +6,16 @@ __pycache__/
 .coverage
 .DS_Store
 .env
-chroma_db/
 build/
 dist/
 
-# Ingested corpus cache (see ingestion/corpus.py) — real patent data pulled from BigQuery,
-# not source; regenerate with `python -m patent_agent.ingestion.ingest_corpus`. Versioning
-# this properly is todo.md section 4's DVC item, not a plain git commit.
-data/
+# data/corpus.json and chroma_db/ (the ingested corpus cache and its embedding index) are
+# now DVC-tracked (see log.md's DVC entry) — `dvc add` manages precise ignores for the real
+# data files in data/.gitignore and chroma_db/.gitignore; only the small .dvc pointer files
+# here are meant to be committed to git. Regenerate with `python -m ingestion.ingest_corpus`.
+
+# Local MLflow tracking store (experiment_tracking.py's default) — live, constantly-growing
+# local state, not something to version; every eval/report-generation run recreates it.
+mlflow.db
+mlruns/
 

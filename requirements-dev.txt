@@ -3,3 +3,7 @@
 pytest>=8.0.0
 pytest-cov>=5.0.0
 ruff>=0.5.0
+
+# Versions data/corpus.json and chroma_db/ (see .dvc/config, data/corpus.json.dvc) — a dev/
+# ingestion-time tool, not something the running app imports, hence dev-only.
+dvc>=3.0.0

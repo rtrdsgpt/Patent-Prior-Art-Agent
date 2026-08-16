@@ -34,6 +34,7 @@ from agents.groq_client import RotatingGroqClient, build_groq_client
 from agents.risk_report_agent import generate_risk_report
 from agents.search_agent import search_prior_art
 from config.settings import Settings, get_settings
+from experiment_tracking import log_report_run
 from retrieval.bm25_index import BM25Index
 from schema import FTOReport, Patent
 from tracing import traced
@@ -77,4 +78,6 @@ def run_fto_pipeline(
         assessments.append(verify_citations(assessment, patent))
 
     otel_trace.get_current_span().set_attribute("num_assessments", len(assessments))
-    return generate_risk_report(disclosure, assessments, client=client, settings=settings)
+    report = generate_risk_report(disclosure, assessments, client=client, settings=settings)
+    log_report_run(report, settings)
+    return report

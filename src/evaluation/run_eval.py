@@ -4,8 +4,9 @@
 
 No Groq calls (see `recall_eval.py`'s docstring for why), so this is safe/cheap to rerun
 whenever the corpus, embedding model, chunking, or reranker changes — exactly the
-"retrieval/reranking experiments" todo.md section 4's MLflow bullet wants tracked. MLflow
-run-logging isn't wired in yet (section 4 still open); this prints a plain report for now.
+"retrieval/reranking experiments" todo.md section 4's MLflow bullet wants tracked. Each run
+is logged as an MLflow run (`experiment_tracking.log_eval_run`) so changing the embedding
+model or corpus and re-running produces a directly comparable row in `mlflow ui`.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import logging
 
 from config.settings import get_settings
 from evaluation.recall_eval import build_eval_set, run_recall_eval
+from experiment_tracking import log_eval_run
 from ingestion.corpus import load_corpus
 from retrieval.bm25_index import build_bm25_index
 from retrieval.embedding_index import build_embedding_index
@@ -45,6 +47,7 @@ def main() -> None:
     patents_by_id = {p.patent_id: p for p in patents}
 
     result = run_recall_eval(eval_cases, bm25_index, embedding_collection, patents_by_id, settings=settings, k=args.k, sample_size=args.sample_size)
+    log_eval_run(result, settings, num_patents_in_corpus=len(patents))
 
     print(f"\n=== Recall@{result.k} eval — {result.num_cases} cases ===")
     print(f"Overall (against ALL real examiner citations, including ones outside this {len(patents)}-patent corpus):")
