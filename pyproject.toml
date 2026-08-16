@@ -9,6 +9,10 @@ description = "Patent prior-art / freedom-to-operate agent"
 requires-python = ">=3.10"
 dependencies = []
 
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = ["schema", "mcp_server"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

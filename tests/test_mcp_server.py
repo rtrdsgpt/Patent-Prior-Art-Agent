@@ -1,7 +1,7 @@
 import pytest
 
-from patent_agent.mcp_server import mcp
-from patent_agent.schema import SearchResult
+from mcp_server import mcp
+from schema import SearchResult
 
 pytestmark = pytest.mark.anyio
 
@@ -18,7 +18,7 @@ async def test_search_prior_art_is_registered():
 
 async def test_search_prior_art_returns_candidates(monkeypatch):
     monkeypatch.setattr(
-        "patent_agent.mcp_server.run_prior_art_search",
+        "mcp_server.run_prior_art_search",
         lambda disclosure_text: [SearchResult(patent_id="US10000001B2", score=0.9, retrieval_method="reranked")],
     )
     result = await mcp.call_tool("search_prior_art", {"disclosure_text": "a neural network", "top_k": 5})
@@ -28,7 +28,7 @@ async def test_search_prior_art_returns_candidates(monkeypatch):
 
 async def test_search_prior_art_respects_top_k(monkeypatch):
     candidates = [SearchResult(patent_id=f"P{i}", score=1.0 - i * 0.1, retrieval_method="reranked") for i in range(5)]
-    monkeypatch.setattr("patent_agent.mcp_server.run_prior_art_search", lambda disclosure_text: candidates)
+    monkeypatch.setattr("mcp_server.run_prior_art_search", lambda disclosure_text: candidates)
     result = await mcp.call_tool("search_prior_art", {"disclosure_text": "x", "top_k": 2})
     assert len(result.structured_content["result"]) == 2
 

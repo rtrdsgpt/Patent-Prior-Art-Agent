@@ -14,8 +14,8 @@ from dataclasses import dataclass
 
 from rank_bm25 import BM25Okapi
 
-from patent_agent.ingestion.chunking import claim_to_index_chunk
-from patent_agent.schema import Patent, SearchResult
+from ingestion.chunking import claim_to_index_chunk
+from schema import Patent, SearchResult
 
 _TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 

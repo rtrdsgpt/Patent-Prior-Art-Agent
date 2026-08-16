@@ -1,4 +1,4 @@
-from patent_agent.ingestion.chunking import claim_to_index_chunk, split_claims
+from ingestion.chunking import claim_to_index_chunk, split_claims
 
 SAMPLE_CLAIMS = """1. A method for training a neural network, comprising:
 receiving a set of labeled training examples; and

@@ -6,8 +6,9 @@ risk-report agents (section 2) are paused pending a Groq API key (see log.md) �
 currently produces a ranked candidate prior-art list, not a full `FTOReport`. The
 `/report/{job_id}` route reflects that honestly (501) rather than fabricating a report.
 
-Corpus is the fixture set (`ingestion.fixtures`) until real BigQuery ingestion lands — see
-`fixtures.py`'s docstring for why that swap won't require changing this module.
+Corpus comes from `ingestion.corpus.load_corpus()` — the real BigQuery-ingested cache if
+one has been generated, else the fixture set. See that module's docstring for why the swap
+between the two doesn't require changing anything here.
 """
 
 from __future__ import annotations
@@ -17,13 +18,13 @@ from functools import lru_cache
 import chromadb
 from chromadb.api.models.Collection import Collection
 
-from patent_agent.config.settings import Settings, get_settings
-from patent_agent.ingestion.fixtures import load_fixture_patents
-from patent_agent.retrieval.bm25_index import BM25Index, build_bm25_index
-from patent_agent.retrieval.embedding_index import build_embedding_index
-from patent_agent.retrieval.hybrid import hybrid_search
-from patent_agent.retrieval.reranker import rerank
-from patent_agent.schema import Patent, SearchResult
+from config.settings import Settings, get_settings
+from ingestion.corpus import load_corpus
+from retrieval.bm25_index import BM25Index, build_bm25_index
+from retrieval.embedding_index import build_embedding_index
+from retrieval.hybrid import hybrid_search
+from retrieval.reranker import rerank
+from schema import Patent, SearchResult
 
 
 def _build_chroma_client(settings: Settings) -> chromadb.ClientAPI:
@@ -40,7 +41,7 @@ def _get_indexes() -> tuple[BM25Index, Collection, dict[str, Patent]]:
     """Build both retrieval indexes once per process and reuse them across requests —
     embedding a corpus is real, non-trivial work, not something to redo per job."""
     settings = get_settings()
-    patents = load_fixture_patents()
+    patents = load_corpus(settings)
     bm25_index = build_bm25_index(patents)
     embedding_collection = build_embedding_index(patents, settings=settings, client=_build_chroma_client(settings))
     patents_by_id = {p.patent_id: p for p in patents}

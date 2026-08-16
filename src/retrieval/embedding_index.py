@@ -16,9 +16,9 @@ from chromadb import Documents, EmbeddingFunction, Embeddings
 from chromadb.api.models.Collection import Collection
 from sentence_transformers import SentenceTransformer
 
-from patent_agent.config.settings import Settings, get_settings
-from patent_agent.ingestion.chunking import claim_to_index_chunk
-from patent_agent.schema import Patent, SearchResult
+from config.settings import Settings, get_settings
+from ingestion.chunking import claim_to_index_chunk
+from schema import Patent, SearchResult
 
 _COLLECTION_NAME = "patent_claims"
 

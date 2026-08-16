@@ -1,11 +1,11 @@
 import pytest
 
-from patent_agent.config.settings import Settings
-from patent_agent.ingestion.fixtures import load_fixture_patents
-from patent_agent.retrieval.bm25_index import build_bm25_index
-from patent_agent.retrieval.embedding_index import build_embedding_index
-from patent_agent.retrieval.hybrid import hybrid_search, reciprocal_rank_fusion
-from patent_agent.schema import SearchResult
+from config.settings import Settings
+from ingestion.fixtures import load_fixture_patents
+from retrieval.bm25_index import build_bm25_index
+from retrieval.embedding_index import build_embedding_index
+from retrieval.hybrid import hybrid_search, reciprocal_rank_fusion
+from schema import SearchResult
 
 
 def _results(*patent_ids: str, method: str = "bm25") -> list[SearchResult]:

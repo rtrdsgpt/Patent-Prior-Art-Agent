@@ -16,7 +16,7 @@ from threading import Lock
 
 from pydantic import BaseModel, Field
 
-from patent_agent.schema import SearchResult
+from schema import SearchResult
 
 
 class JobStatus(str, Enum):

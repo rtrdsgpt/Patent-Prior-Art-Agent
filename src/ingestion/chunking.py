@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-from patent_agent.schema import Claim
+from schema import Claim
 
 # Matches a claim boundary: a line starting with "N. " (claim number + period + whitespace).
 # Anchored to line start so mid-claim references like "the method of claim 1" don't match —

@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from sentence_transformers import CrossEncoder
 
-from patent_agent.config.settings import Settings, get_settings
-from patent_agent.schema import Patent, SearchResult
+from config.settings import Settings, get_settings
+from schema import Patent, SearchResult
 
 
 def _patent_document_text(patent: Patent) -> str:

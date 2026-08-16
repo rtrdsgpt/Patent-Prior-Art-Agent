@@ -1,8 +1,8 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from patent_agent.api import app as app_module
-from patent_agent.schema import SearchResult
+from api import app as app_module
+from schema import SearchResult
 
 
 @pytest.fixture

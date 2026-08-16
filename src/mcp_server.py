@@ -11,7 +11,7 @@ from __future__ import annotations
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from patent_agent.api.pipeline import run_prior_art_search
+from api.pipeline import run_prior_art_search
 
 mcp = MCPServer("patent-prior-art-agent")
 

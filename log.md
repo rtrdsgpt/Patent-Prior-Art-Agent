@@ -429,3 +429,105 @@ match=...)` rather than checking a result object's `is_error` flag, which is wha
 plugin ships with the `anyio` package already in the dependency tree — no separate test
 dependency needed) since `MCPServer.call_tool`/`list_tools` are async. Added `mcp>=2.0.0` to
 `requirements.txt`. Full suite: 69 passed.
+
+## 2026-08-16 — User-requested restructure: flatten `src/patent_agent/` to `src/`
+
+User asked, mid-session, to drop the `patent_agent` package folder and have modules live
+directly under `src/` (`src/schema.py`, `src/ingestion/`, `src/api/`, etc., rather than
+`src/patent_agent/schema.py` etc.). Confirmed the exact target shape before touching
+anything, since "move the files" was ambiguous about whether `src/` itself should also go
+away — user confirmed: keep the `src/` layout, just remove the `patent_agent` nesting level.
+
+Mechanical but repo-wide: `git mv` for every module/package (preserves history rather than
+delete+recreate), then a blanket `sed 's/patent_agent\.//g'` across every `.py` file in
+`src/` and `tests/` to fix ~61 import lines and monkeypatch target strings (e.g.
+`"patent_agent.mcp_server.run_prior_art_search"` → `"mcp_server.run_prior_art_search"`) in
+one pass, followed by hand fixes for what a blind string replace couldn't catch:
+
+- `ingestion/fixtures.py`'s repo-root path resolution (`Path(__file__).resolve().parents[N]`)
+  needed `N` decremented by one — it counts directory levels up to the repo root, and there's
+  now one fewer level between the module and the root.
+- `pyproject.toml`: `[tool.setuptools.packages.find]` alone doesn't discover standalone
+  modules (`schema.py`, `mcp_server.py` have no `__init__.py`/parent package now, they're
+  just files directly under `src/`) — added `package-dir = {"" = "src"}` and `py-modules =
+  ["schema", "mcp_server"]` explicitly.
+- `Dockerfile`'s `CMD` referenced `patent_agent.api.app:app`.
+- `README.md`/`docs/cpc_scope.md`/`.env.example` had hardcoded `src/patent_agent/...` paths
+  in prose, not code the sed pass would touch.
+
+**Verification, not just "tests still pass":** reinstalled the package
+(`pip install -e . --no-deps`), confirmed every module imports cleanly, ran the full test
+suite (69 passed) and `ruff check` (clean), then — since a Python-level pass doesn't prove
+the *deployed* path works — ran the API locally with `uvicorn api.app:app` and drove a real
+`/disclosure/analyze` → poll `/jobs/{id}` → `completed` cycle by hand (LSTM patent
+`US10000003B2` correctly ranked first for an LSTM-flavored disclosure), the same kind of
+real check used for the Docker deployment earlier. No new bugs surfaced from the restructure
+itself, unlike the Docker one.
+
+## 2026-08-16 — Wired the real ingested corpus into the pipeline — and found the CPC-scope
+doc's core evaluability claim was wrong
+
+Added `ingestion/corpus.py` (`load_corpus()`/`save_corpus()`) and
+`ingestion/ingest_corpus.py` (`python -m ingestion.ingest_corpus`, a one-shot CLI, not yet
+the Airflow DAG from todo.md section 4 — see the Docker entry above for why that's deferred).
+`load_corpus()` reads a cached `data/corpus.json` if one exists, else falls back to the
+fixture set — same fallback reasoning as `fixtures.py` itself. `api/pipeline.py`'s
+`_get_indexes()` now calls `load_corpus()` instead of `load_fixture_patents()` directly, so
+the API/MCP tools search whatever corpus is actually cached, real or fixture, without caring
+which. `data/` added to `.gitignore` — this is real bulk data pulled from BigQuery, not
+source, and properly versioning it is todo.md section 4's DVC item, not a plain git commit.
+
+Ran `python -m ingestion.ingest_corpus` for the first time against live BigQuery: 291
+patents ingested. Then, out of habit of checking a new dataset rather than trusting it,
+inspected the result — `examiner_cited_patent_ids` was empty for **all 291 patents**. That's
+not a plausible outcome for a targeted CPC slice this size, and it directly contradicts
+`docs/cpc_scope.md`'s stated reason for picking `G06N3` in the first place ("real ground
+truth exists... `citation.category = 'EXA'`... this was checked before picking the class,
+not assumed").
+
+**Investigated with live `bq query` rather than guessing:**
+- Grouped `citation.category` by value across the *entire* live `patents.publications`
+  table (not just the 291-patent sample) — zero rows anywhere contain `"EXA"`, across
+  ~3.6M citation rows in the G06N3-scoped slice alone. Whatever check the CPC-scope doc's
+  author believed they'd done, this value is not actually populated in the live data today.
+- Grouped again to see what values *are* populated: `APP` (1.89M), `SEA` (908K+),
+  `PRS`/`ISR`/etc. in smaller numbers — and, importantly, the raw field isn't single-valued:
+  real rows contain comma-joined compound strings like `"APP,APP"` or `"PRS,SEA"`, which an
+  exact-match dict lookup (the original `_CATEGORY_MAP`) would silently miss entirely,
+  compounding the problem.
+- Reasoned about *why* `SEA` (not `EXA`) is what's populated: Google Patents Public Data
+  sources its `citation` field from EPO/DOCDB's harmonized citation categories, and DOCDB's
+  own taxonomy uses `SEA` ("search report") for citations added during the patent office's
+  own prior-art search — which for a US application *is* the examiner's search. `EXA` is
+  listed in the field's own BigQuery description as if it were a live category, but isn't
+  actually one DOCDB harmonization populates for this table. Confirmed `SEA`-category rows
+  carry `type` values `X`/`Y` (DOCDB's own "particularly relevant" relevance codes), which is
+  the concrete signal that these are genuinely examiner-flagged prior art, not incidental.
+
+**Fix:** `bigquery_client.py`'s category mapping is now `_map_citation_category()` — splits
+the raw string on comma and checks token membership (`SEA` → `CitationCategory.EXAMINER`,
+`APP` → `CitationCategory.APPLICANT`, `SEA` takes precedence when both appear together, e.g.
+`"APP,SEA"`, since being flagged in the office's own search is the stronger signal). Our own
+`CitationCategory.EXAMINER` enum member keeps its existing internal value (`"EXA"`) —
+that's our domain vocabulary, not required to match Google's raw source string, and changing
+it would have broken the already-correct hand-authored fixture corpus
+(`tests/fixtures/sample_patents.json`, which encodes `"EXA"` directly since it's clean data
+authored by hand, not translated from a raw BigQuery code). Re-ran ingestion after the fix:
+**149 of 291 patents** now have at least one examiner-cited reference — a real, usable
+ground-truth signal for the section 5 recall@k eval work.
+
+Added a `pytest.mark.integration` regression test,
+`test_fetch_patents_live_corpus_has_examiner_citations`, specifically so this exact failure
+mode (category mapping silently matching nothing) can't regress unnoticed again — it asserts
+a live 50-patent sample actually yields examiner citations, not just that ingestion runs
+without erroring. Also added 3 fast unit tests for the compound-value splitting and
+`SEA`-precedence behavior, and updated the existing category-mapping test to use `"SEA"`
+instead of the now-known-fictional `"EXA"`. Full suite: 77 passed.
+
+**Why this is worth dwelling on:** this is exactly the kind of assumption that looks
+verified in a planning doc (a specific field name, a specific value, cited as "checked, not
+assumed") but wasn't actually checked against live data — it was checked against the field's
+*documentation*, which turned out to describe a broader taxonomy than what's actually
+populated. The fix was cheap once found (one BigQuery grouping query, then a small mapping
+change), but finding it required actually inspecting ingested output rather than treating
+"ingestion ran without an error" as "ingestion is correct."

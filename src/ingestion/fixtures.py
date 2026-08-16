@@ -11,8 +11,8 @@ from __future__ import annotations
 import json
 from functools import lru_cache
 
-from patent_agent.ingestion.chunking import split_claims
-from patent_agent.schema import Citation, Patent
+from ingestion.chunking import split_claims
+from schema import Citation, Patent
 
 _FIXTURE_FILE = "sample_patents.json"
 
@@ -22,7 +22,7 @@ def _fixture_path() -> str:
     # importlib.resources (which expects an installed package).
     from pathlib import Path
 
-    return str(Path(__file__).resolve().parents[3] / "tests" / "fixtures" / _FIXTURE_FILE)
+    return str(Path(__file__).resolve().parents[2] / "tests" / "fixtures" / _FIXTURE_FILE)
 
 
 @lru_cache

@@ -1,5 +1,5 @@
-from patent_agent.ingestion.fixtures import load_fixture_patents
-from patent_agent.retrieval.bm25_index import build_bm25_index, bm25_search
+from ingestion.fixtures import load_fixture_patents
+from retrieval.bm25_index import build_bm25_index, bm25_search
 
 PATENTS = load_fixture_patents()
 

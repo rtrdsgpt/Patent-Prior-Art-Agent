@@ -9,13 +9,13 @@ report citing specific, verified source text, and evaluated against real ground 
 
 This is a greenfield build. What exists so far:
 
-- **Data models** (`src/patent_agent/schema.py`) — `Patent`, `Claim`, `InventionDisclosure`,
+- **Data models** (`src/schema.py`) — `Patent`, `Claim`, `InventionDisclosure`,
   `SearchResult`, `ClaimElementComparison`, `NoveltyAssessment`, `FTOReport`.
-- **Claim-level chunking** (`src/patent_agent/ingestion/chunking.py`) — parses a patent's
+- **Claim-level chunking** (`src/ingestion/chunking.py`) — parses a patent's
   raw claims-section text into individual `Claim` objects (claim number, text,
   independent/dependent, what it depends on). Claim-level is the chunk boundary used
   throughout, since a claim is the smallest independently legally-meaningful unit.
-- **Settings** (`src/patent_agent/config/settings.py`) — env-driven config (Groq for the
+- **Settings** (`src/config/settings.py`) — env-driven config (Groq for the
   LLM, BigQuery for ingestion, retrieval/reranking knobs).
 - **CPC scope decision** (`docs/cpc_scope.md`) — first working slice is scoped to `G06N3`
   (neural networks); see that doc for why.

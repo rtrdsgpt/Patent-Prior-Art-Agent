@@ -1,8 +1,8 @@
 import pytest
 from google.cloud.bigquery.table import Row
 
-from patent_agent.config.settings import Settings, get_settings
-from patent_agent.ingestion.bigquery_client import _parse_publication_date, _row_to_patent, fetch_patents
+from config.settings import Settings, get_settings
+from ingestion.bigquery_client import _parse_publication_date, _row_to_patent, fetch_patents
 
 
 def _make_row(**fields) -> Row:
@@ -60,10 +60,12 @@ def test_row_to_patent_returns_none_when_claims_text_does_not_parse_into_claims(
 
 
 def test_row_to_patent_maps_examiner_and_applicant_citation_categories():
+    # "SEA" (search report), not the field-description-documented-but-never-actually-
+    # populated "EXA" — see log.md for the live `bq query` that established this.
     row = _make_row(
         **_base_row_fields(
             citations=[
-                {"cited_patent_id": "US-1111111-A1", "category": "EXA"},
+                {"cited_patent_id": "US-1111111-A1", "category": "SEA"},
                 {"cited_patent_id": "US-2222222-A1", "category": "APP"},
             ]
         )
@@ -73,9 +75,43 @@ def test_row_to_patent_maps_examiner_and_applicant_citation_categories():
 
 
 def test_row_to_patent_maps_unrecognized_citation_category_to_other():
-    from patent_agent.schema import CitationCategory
+    from schema import CitationCategory
 
     row = _make_row(**_base_row_fields(citations=[{"cited_patent_id": "US-3333333-A1", "category": "OPP"}]))
+    patent = _row_to_patent(row)
+    assert patent.citations[0].category == CitationCategory.OTHER
+
+
+def test_row_to_patent_handles_compound_category_values():
+    # Real rows carry comma-joined multi-flag category strings (e.g. "PRS,SEA") rather than
+    # a single token — SEA anywhere in the tokens should still count as examiner-cited.
+    from schema import CitationCategory
+
+    row = _make_row(
+        **_base_row_fields(
+            citations=[
+                {"cited_patent_id": "US-4444444-A1", "category": "PRS,SEA"},
+                {"cited_patent_id": "US-5555555-A1", "category": "APP,APP"},
+            ]
+        )
+    )
+    patent = _row_to_patent(row)
+    assert patent.citations[0].category == CitationCategory.EXAMINER
+    assert patent.citations[1].category == CitationCategory.APPLICANT
+
+
+def test_row_to_patent_sea_takes_precedence_over_app_when_both_present():
+    from schema import CitationCategory
+
+    row = _make_row(**_base_row_fields(citations=[{"cited_patent_id": "US-6666666-A1", "category": "APP,SEA"}]))
+    patent = _row_to_patent(row)
+    assert patent.citations[0].category == CitationCategory.EXAMINER
+
+
+def test_row_to_patent_handles_none_category():
+    from schema import CitationCategory
+
+    row = _make_row(**_base_row_fields(citations=[{"cited_patent_id": "US-7777777-A1", "category": None}]))
     patent = _row_to_patent(row)
     assert patent.citations[0].category == CitationCategory.OTHER
 
@@ -99,3 +135,18 @@ def test_fetch_patents_live_bigquery_query():
         assert patent.patent_id.startswith("US")
         assert any(code.startswith("G06N3") for code in patent.cpc_codes)
         assert len(patent.claims) > 0
+
+
+@pytest.mark.integration
+def test_fetch_patents_live_corpus_has_examiner_citations():
+    """Regression guard for the "EXA" vs "SEA" finding (see log.md): confirms a real sample
+    from BigQuery actually yields examiner-cited prior art, not just that ingestion runs
+    without erroring. If this starts failing, the category mapping has silently regressed
+    to matching nothing again — exactly the bug this test exists to catch."""
+    settings = get_settings()
+    if not settings.gcp_project_id:
+        pytest.skip("GCP_PROJECT_ID not configured — set up .env to run this against live BigQuery")
+
+    patents = fetch_patents(Settings(gcp_project_id=settings.gcp_project_id, target_cpc_class="G06N3", corpus_size=50))
+
+    assert any(patent.examiner_cited_patent_ids for patent in patents)

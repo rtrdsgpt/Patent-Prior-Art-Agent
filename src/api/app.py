@@ -12,8 +12,8 @@ import logging
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel
 
-from patent_agent.api.jobs import Job, JobStore
-from patent_agent.api.pipeline import run_prior_art_search
+from api.jobs import Job, JobStore
+from api.pipeline import run_prior_art_search
 
 logger = logging.getLogger(__name__)
 

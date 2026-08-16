@@ -1,5 +1,5 @@
-from patent_agent.ingestion.fixtures import load_fixture_patents
-from patent_agent.schema import CitationCategory
+from ingestion.fixtures import load_fixture_patents
+from schema import CitationCategory
 
 
 def test_load_fixture_patents_returns_patents():

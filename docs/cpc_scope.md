@@ -34,6 +34,6 @@ second-slice expansion once the pipeline works, not a day-one decision.
 ## Changing this later
 
 If `G06N3` turns out too small/large once real query volumes against BigQuery are known,
-change `target_cpc_class` in `src/patent_agent/config/settings.py` — the ingestion query
-in `src/patent_agent/ingestion/bigquery_client.py` reads it from settings, not a hardcoded
+change `target_cpc_class` in `src/config/settings.py` — the ingestion query
+in `src/ingestion/bigquery_client.py` reads it from settings, not a hardcoded
 literal.

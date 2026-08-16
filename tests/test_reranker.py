@@ -1,9 +1,9 @@
 import pytest
 
-from patent_agent.config.settings import Settings
-from patent_agent.ingestion.fixtures import load_fixture_patents
-from patent_agent.retrieval.reranker import rerank
-from patent_agent.schema import SearchResult
+from config.settings import Settings
+from ingestion.fixtures import load_fixture_patents
+from retrieval.reranker import rerank
+from schema import SearchResult
 
 pytestmark = pytest.mark.slow  # loads a real local cross-encoder model
 

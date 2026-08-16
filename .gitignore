@@ -9,3 +9,9 @@ __pycache__/
 chroma_db/
 build/
 dist/
+
+# Ingested corpus cache (see ingestion/corpus.py) — real patent data pulled from BigQuery,
+# not source; regenerate with `python -m patent_agent.ingestion.ingest_corpus`. Versioning
+# this properly is todo.md section 4's DVC item, not a plain git commit.
+data/
+

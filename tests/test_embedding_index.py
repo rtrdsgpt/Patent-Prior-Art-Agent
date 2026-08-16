@@ -1,7 +1,7 @@
 import pytest
 
-from patent_agent.ingestion.fixtures import load_fixture_patents
-from patent_agent.retrieval.embedding_index import build_embedding_index, dense_search
+from ingestion.fixtures import load_fixture_patents
+from retrieval.embedding_index import build_embedding_index, dense_search
 
 pytestmark = pytest.mark.slow  # loads a real local embedding model
 

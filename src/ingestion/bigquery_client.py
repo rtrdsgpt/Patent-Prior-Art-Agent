@@ -15,9 +15,9 @@ from datetime import date
 
 from google.cloud import bigquery
 
-from patent_agent.config.settings import Settings, get_settings
-from patent_agent.ingestion.chunking import split_claims
-from patent_agent.schema import Citation, CitationCategory, Patent
+from config.settings import Settings, get_settings
+from ingestion.chunking import split_claims
+from schema import Citation, CitationCategory, Patent
 
 _TABLE = "patents-public-data.patents.publications"
 
@@ -42,13 +42,26 @@ WHERE country_code = 'US'
 LIMIT @corpus_size
 """
 
-# citation.category's real values (CH2/SUP/ISR/SEA/APP/EXA/OPP/115/PRS/APL/FOP, per the
-# field's BigQuery description) map onto only two of our three CitationCategory members —
-# everything that isn't examiner- or applicant-cited prior art collapses to OTHER.
-_CATEGORY_MAP = {
-    "EXA": CitationCategory.EXAMINER,
-    "APP": CitationCategory.APPLICANT,
-}
+# citation.category is documented (in the field's own BigQuery description) as one of
+# CH2/SUP/ISR/SEA/APP/EXA/OPP/115/PRS/APL/FOP — but empirically, across the entire US
+# publications table, "EXA" never actually appears (verified with a live `bq query` grouping
+# by category before writing this — see log.md). What's actually populated for
+# examiner-added prior art is "SEA" (search report): Google Patents Public Data sources
+# citations from EPO/DOCDB harmonization, and for US patents the office's own search-stage
+# citations land under DOCDB's "SEA" code, not a USPTO-specific "EXA" one, despite the field
+# description listing EXA as if it were live. So CitationCategory.EXAMINER (our own internal
+# vocabulary, unrelated to needing to match Google's raw string) is populated from "SEA".
+#
+# The raw field is also not single-valued: real rows have comma-joined compound strings like
+# "APP,APP" or "PRS,SEA" (a citation can carry multiple category flags at once), so this
+# checks token membership after splitting on comma rather than exact string equality.
+def _map_citation_category(raw_category: str | None) -> CitationCategory:
+    tokens = set((raw_category or "").split(","))
+    if "SEA" in tokens:
+        return CitationCategory.EXAMINER
+    if "APP" in tokens:
+        return CitationCategory.APPLICANT
+    return CitationCategory.OTHER
 
 
 def _parse_publication_date(raw: int | None) -> date | None:
@@ -72,7 +85,7 @@ def _row_to_patent(row: bigquery.table.Row) -> Patent | None:
         return None
 
     citations = [
-        Citation(cited_patent_id=c["cited_patent_id"], category=_CATEGORY_MAP.get(c["category"], CitationCategory.OTHER))
+        Citation(cited_patent_id=c["cited_patent_id"], category=_map_citation_category(c["category"]))
         for c in row["citations"]
     ]
 

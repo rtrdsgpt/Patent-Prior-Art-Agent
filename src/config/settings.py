@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     # Cap on patents pulled per ingestion run — keeps BigQuery cost/time bounded for the
     # first working slice; see docs/cpc_scope.md's "scope discipline" section.
     corpus_size: int = 300
+    # Where `ingestion/ingest_corpus.py` writes, and `ingestion/corpus.py` reads, the
+    # ingested corpus cache — see corpus.py's docstring for why this is cached at all.
+    corpus_cache_path: str = "data/corpus.json"
 
     # Retrieval
     vector_store_backend: str = "chroma"

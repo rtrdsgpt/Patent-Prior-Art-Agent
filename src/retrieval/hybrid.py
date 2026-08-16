@@ -12,10 +12,10 @@ from __future__ import annotations
 
 from chromadb.api.models.Collection import Collection
 
-from patent_agent.config.settings import Settings, get_settings
-from patent_agent.retrieval.bm25_index import BM25Index, bm25_search
-from patent_agent.retrieval.embedding_index import dense_search
-from patent_agent.schema import SearchResult
+from config.settings import Settings, get_settings
+from retrieval.bm25_index import BM25Index, bm25_search
+from retrieval.embedding_index import dense_search
+from schema import SearchResult
 
 _DEFAULT_RRF_K = 60
 

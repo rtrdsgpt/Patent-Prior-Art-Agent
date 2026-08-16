@@ -1,5 +1,5 @@
-from patent_agent.api.jobs import JobStatus, JobStore
-from patent_agent.schema import SearchResult
+from api.jobs import JobStatus, JobStore
+from schema import SearchResult
 
 
 def test_create_job_starts_pending():
