@@ -676,3 +676,63 @@ to control relevance counts directly — this agent's orchestration logic, not r
 correctness, is what's under test here), 1 `slow`-marked real end-to-end test over the
 fixture corpus. Updated `test_api.py`'s 501-message assertion to match the corrected wording.
 Full suite: 98 passed.
+
+## 2026-08-16 — Remaining section-2 agents: claims-parser, comparison, citation guard
+
+User said to keep going. Built the rest of todo.md section 2 except the risk-report agent
+and orchestration (next entry): claims-parser, comparison/novelty-assessment, and the
+deterministic citation-verification guard.
+
+**Extracted `agents/groq_json.py` before writing a third copy of the same loop.**
+`disclosure_parser.py` had already written "call Groq in JSON mode, validate against a
+schema, retry with the error fed back on failure, bounded attempts" once; claims-parser and
+comparison were both about to write it again with only the validation callback differing.
+Pulled that loop into `request_json(client, settings, system_prompt, user_prompt, validate,
+max_attempts)` and refactored `disclosure_parser.py` to use it (behavior unchanged — its
+existing 6 tests still pass unmodified). This is the "third repetition is the signal to
+extract" rule applied literally, not speculative reuse for a pattern that might recur.
+
+**`claims_parser.py`** (`parse_claim_elements()`): one Groq call per patent, batching *all*
+independent claims into a single request rather than one call per claim — same O(candidates)
+call-count discipline as everything else here, since this runs once per search-result
+candidate. Its output (a reasoning aid breaking claim language into discrete elements) is
+explicitly documented as *not* the source of truth for citation — the comparison agent still
+quotes from the raw `Claim.text`, and the guard checks against that, not against anything
+this module produces, so a claims-parser paraphrase can't compromise downstream correctness.
+
+**`comparison_agent.py`** (`assess_novelty()`): also one call per patent — all independent
+claims and all disclosure elements in one request, producing one `ClaimElementComparison`
+per disclosure element (the model picks whichever claim is most relevant to compare against,
+including for the "no real overlap" case, rather than exhaustively comparing every
+element×claim pair). The prompt requires the model to echo the disclosure element back
+verbatim and to quote claim text verbatim — both are treated as *requests*, not guarantees:
+`_validate()` re-checks that `candidate_claim_number` actually names one of the patent's real
+independent claims (a hallucinated claim number is caught and retried immediately, before
+the citation guard would even need to run) and that every disclosure element got a
+comparison, but does **not** attempt to verify the quoted text is genuine — that's
+deliberately left entirely to the next module, so there's exactly one place in the codebase
+responsible for that check.
+
+**`citation_guard.py`** (`verify_citations()`) — the todo.md-mandated deterministic guard,
+no LLM call at all. Re-checks every comparison's `cited_claim_text` against the *actual*
+`Claim.text` on the patent object (not anything the LLM said about the claim), setting
+`NoveltyAssessment.citation_verified` to `True` only if every single comparison's quote
+genuinely appears (whitespace-normalized substring check — collapses newlines/extra spaces
+so formatting-only differences don't fail a real citation, while staying a strict substring
+check, not fuzzy/semantic matching) in the claim it names. `False` the moment any comparison
+fails, including citing a claim number that doesn't exist on the patent at all. Also guards
+against a caller-side mistake — raises if `assessment.candidate_patent_id` doesn't match the
+`patent` passed in, rather than silently verifying against the wrong patent's claims.
+
+**Verified the comparison agent's real output is genuinely groundable, not just schema-
+valid:** the live integration test for `comparison_agent.py` doesn't just check the response
+parses — it re-derives each cited claim's real text from the fixture patent and asserts the
+model's `cited_claim_text` is an actual substring of it, i.e. it runs the same check
+`citation_guard.py` would, as a live sanity check that the two pieces actually agree with
+each other before wiring them together.
+
+25 new tests across `test_groq_json.py` (6), `test_claims_parser.py` (5, incl. 1 live),
+`test_comparison_agent.py` (8, incl. 1 live), `test_citation_guard.py` (9 — includes
+whitespace tolerance, vacuous-true on no comparisons, patent-ID-mismatch guard, and a
+mutation check confirming `verify_citations` returns a copy rather than mutating the input).
+Full suite: 126 passed.
