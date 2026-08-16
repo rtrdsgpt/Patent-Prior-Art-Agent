@@ -1,8 +1,10 @@
+from unittest.mock import MagicMock
+
 import pytest
 from google.cloud.bigquery.table import Row
 
 from config.settings import Settings, get_settings
-from ingestion.bigquery_client import _parse_publication_date, _row_to_patent, fetch_patents
+from ingestion.bigquery_client import _parse_publication_date, _row_to_patent, fetch_patents, fetch_patents_by_id
 
 
 def _make_row(**fields) -> Row:
@@ -150,3 +152,35 @@ def test_fetch_patents_live_corpus_has_examiner_citations():
     patents = fetch_patents(Settings(gcp_project_id=settings.gcp_project_id, target_cpc_class="G06N3", corpus_size=50))
 
     assert any(patent.examiner_cited_patent_ids for patent in patents)
+
+
+def test_fetch_patents_by_id_empty_list_returns_empty_without_querying():
+    client = MagicMock()
+    assert fetch_patents_by_id([], client=client) == []
+    client.query.assert_not_called()
+
+
+@pytest.mark.integration
+def test_fetch_patents_by_id_live_bigquery_query():
+    settings = get_settings()
+    if not settings.gcp_project_id:
+        pytest.skip("GCP_PROJECT_ID not configured — set up .env to run this against live BigQuery")
+
+    # US-9646243-B1 is a real patent seen as an examiner-cited reference during earlier
+    # corpus ingestion (see log.md) -- fetching it by ID should return exactly that patent.
+    patents = fetch_patents_by_id(["US-9646243-B1"], Settings(gcp_project_id=settings.gcp_project_id))
+
+    assert len(patents) == 1
+    assert patents[0].patent_id == "US-9646243-B1"
+    assert len(patents[0].claims) > 0
+
+
+@pytest.mark.integration
+def test_fetch_patents_by_id_unknown_id_returns_empty():
+    settings = get_settings()
+    if not settings.gcp_project_id:
+        pytest.skip("GCP_PROJECT_ID not configured — set up .env to run this against live BigQuery")
+
+    patents = fetch_patents_by_id(["US-0000000-NOTREAL"], Settings(gcp_project_id=settings.gcp_project_id))
+
+    assert patents == []

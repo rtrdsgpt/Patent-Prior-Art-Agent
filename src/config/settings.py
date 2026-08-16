@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     # Where `ingestion/ingest_corpus.py` writes, and `ingestion/corpus.py` reads, the
     # ingested corpus cache — see corpus.py's docstring for why this is cached at all.
     corpus_cache_path: str = "data/corpus.json"
+    # After the CPC-scoped seed fetch, also fetch the seed set's own examiner-cited patents
+    # by ID so their real prior art is actually reachable within the indexed corpus — a
+    # plain LIMIT-based sample has ~0 citation overlap with itself by chance (see
+    # ingestion/bigquery_client.py's fetch_patents_by_id docstring and log.md).
+    expand_corpus_with_citations: bool = True
 
     # Retrieval
     vector_store_backend: str = "chroma"

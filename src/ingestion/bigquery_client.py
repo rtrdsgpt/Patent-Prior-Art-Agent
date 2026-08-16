@@ -21,8 +21,7 @@ from schema import Citation, CitationCategory, Patent
 
 _TABLE = "patents-public-data.patents.publications"
 
-_QUERY = f"""
-SELECT
+_SELECT_FIELDS = """
   publication_number,
   (SELECT text FROM UNNEST(title_localized) WHERE language = 'en' LIMIT 1) AS title,
   (SELECT text FROM UNNEST(abstract_localized) WHERE language = 'en' LIMIT 1) AS abstract,
@@ -35,11 +34,24 @@ SELECT
     FROM UNNEST(citation)
     WHERE publication_number != ''
   ) AS citations
+"""
+
+_SEED_QUERY = f"""
+SELECT {_SELECT_FIELDS}
 FROM `{_TABLE}`
 WHERE country_code = 'US'
   AND EXISTS(SELECT 1 FROM UNNEST(cpc) AS c WHERE c.code LIKE @cpc_prefix)
   AND EXISTS(SELECT 1 FROM UNNEST(claims_localized) AS cl WHERE cl.language = 'en' AND cl.text != '')
 LIMIT @corpus_size
+"""
+
+# No CPC/claims-language WHERE filter beyond an exact ID match — used to fetch specific
+# cited patents by ID (see fetch_patents_by_id), which can be in any CPC class. Rows with no
+# usable English claims still get dropped by _row_to_patent same as the seed query.
+_BY_ID_QUERY = f"""
+SELECT {_SELECT_FIELDS}
+FROM `{_TABLE}`
+WHERE publication_number IN UNNEST(@patent_ids)
 """
 
 # citation.category is documented (in the field's own BigQuery description) as one of
@@ -118,7 +130,31 @@ def fetch_patents(settings: Settings | None = None, client: bigquery.Client | No
             bigquery.ScalarQueryParameter("corpus_size", "INT64", settings.corpus_size),
         ]
     )
-    rows = client.query(_QUERY, job_config=job_config).result()
+    rows = client.query(_SEED_QUERY, job_config=job_config).result()
+
+    patents = [_row_to_patent(row) for row in rows]
+    return [p for p in patents if p is not None]
+
+
+def fetch_patents_by_id(patent_ids: list[str], settings: Settings | None = None, client: bigquery.Client | None = None) -> list[Patent]:
+    """Fetch specific patents by `publication_number`.
+
+    Used to expand the corpus along citation edges (`ingest_corpus.py`) — `fetch_patents`'s
+    plain `LIMIT`-based sample has no `ORDER BY`, so it's effectively an arbitrary slice of
+    the CPC class; a patent's real examiner-cited prior art almost never lands in that same
+    arbitrary slice by chance (confirmed empirically: 0 of 1279 unique cited IDs from an
+    initial 291-patent seed corpus were already present in it — see log.md). Fetching the
+    cited patents themselves, by ID, is what makes recall@k against them meaningful instead
+    of vacuously zero.
+    """
+    if not patent_ids:
+        return []
+
+    settings = settings or get_settings()
+    client = client or bigquery.Client(project=settings.gcp_project_id)
+
+    job_config = bigquery.QueryJobConfig(query_parameters=[bigquery.ArrayQueryParameter("patent_ids", "STRING", patent_ids)])
+    rows = client.query(_BY_ID_QUERY, job_config=job_config).result()
 
     patents = [_row_to_patent(row) for row in rows]
     return [p for p in patents if p is not None]

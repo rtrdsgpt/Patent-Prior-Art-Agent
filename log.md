@@ -871,3 +871,83 @@ No test changes needed — `citation_guard.py`'s existing 9 tests exercise its o
 `verify_citations()` contract (which comparisons pass/fail, the patent-ID guard, no
 mutation), not the internals of whichever text-matching function it delegates to. Full
 suite: 145 passed (unchanged).
+
+## 2026-08-16 — Recall@k eval harness (todo.md section 5)
+
+Added `evaluation/recall_eval.py` (`build_eval_set()`/`run_recall_eval()`, using
+`grounded_evals.evaluate_retrieval`) and `evaluation/run_eval.py` (`python -m
+evaluation.run_eval`, a CLI to run it against the real ingested corpus). Full design
+reasoning is in the module's own docstring (worth reading directly — it's long because there
+were several real decisions, not because it's padded): each patent stands in as its own
+query (title+abstract), scoring raw `hybrid_search`+`rerank` rather than routing through the
+LLM agents (recall@k is a retrieval metric; going through Groq would confound disclosure-
+parsing quality with retrieval quality, and would force sampling instead of running the full
+eval set), and two metrics — "overall" against every real examiner citation, "in-corpus"
+against only the subset actually present in the index — since most citations were expected
+to point outside this deliberately small, single-CPC-class corpus.
+
+Also fixed a subtler correctness detail before ever running it for real: each query patent
+trivially self-matches (it's being searched against a corpus that includes itself), which
+would otherwise consume a top-k slot with a non-informative hit — over-fetched `k+1`
+candidates, filtered the self-match, then truncated to exactly `k` so recall@k/MRR/nDCG@k all
+score a consistently-sized list (`grounded_evals.reciprocal_rank` in particular has no `k`
+bound of its own, so an inconsistent list length there would have silently skewed MRR).
+
+10 new tests in `tests/test_recall_eval.py`: eval-set construction (only patents with real
+citations included, query text combines title+abstract, in-corpus vs. full ground truth
+correctly distinguished), the self-match-filtering and `k+1` over-fetch behavior (mocked
+retrieval, checked directly rather than trusted), `sample_size`, `in_corpus=None` when no
+case has an in-corpus citation, plus 1 `slow`-marked end-to-end run over the fixture corpus.
+
+**Ran it for real against the live 291-patent corpus — got recall@10 = 0.000 across all 149
+eval cases, with zero cases having any citation present in the corpus at all.** Not a bug in
+the eval code — traced it to `bigquery_client.py`'s seed query: a plain `LIMIT @corpus_size`
+with no `ORDER BY` is an arbitrary slice of the ~150k+ patents in this CPC class, so a given
+patent's real examiner-cited prior art (mostly older patents, scattered across the full
+population) essentially never happens to land in that same arbitrary ~300-patent slice by
+chance — confirmed with `python -c` checking that 0 of 1279 unique cited IDs across the
+corpus were already present in it. This is exactly the failure mode the "two metrics"
+design in the module docstring was written to anticipate (most citations point outside the
+corpus) — except reality was more extreme than expected (not "most," *all*), which meant the
+`in_corpus` metric wasn't just low, it was permanently vacuous under the existing ingestion
+strategy. See the next entry for the fix, since leaving section 5 at "the eval code is
+correct but the corpus can never produce a non-zero in-corpus signal" would have been a real
+gap, not a finished feature.
+
+## 2026-08-16 — Citation-aware corpus expansion, and a Chroma batch-size bug it surfaced
+
+**Fix for the zero-overlap finding above:** added `bigquery_client.fetch_patents_by_id()` (a
+`publication_number IN UNNEST(@patent_ids)` query, no CPC/claims-language filter — cited
+prior art can be in any CPC class) and wired it into `ingest_corpus.py` as a second stage:
+after the CPC-scoped seed fetch, collect every unique examiner-cited ID from the seed set not
+already in the corpus, and fetch those patents too. New `Settings.expand_corpus_with_citations`
+(default `True`) makes this skippable. Ran it for real: 280 seed patents → 1334 unique cited
+IDs → 1208 of those actually had usable English claims text → **1488 total patents**, now
+with real, reachable citation edges instead of zero.
+
+**Running the real eval against this larger corpus surfaced a genuine bug, not a data issue
+this time:** `chromadb.errors.InternalError: ValueError: Batch size of 31034 is greater than
+max batch size of 5461`. `embedding_index.build_embedding_index()` sent every claim chunk to
+`collection.upsert()` in a single call — harmless at fixture-corpus/291-patent scale (well
+under Chroma's batch cap), a real crash once the citation-expanded corpus's ~31k claim
+chunks blew past it. Fixed by querying the client's own `get_max_batch_size()` (not
+hardcoding the observed 5461 — that's a property of this Chroma version/config, not a
+constant to bake in) and upserting in batches of that size. 1 new test
+(`test_build_embedding_index_batches_upsert_beyond_max_batch_size`) using a mocked client
+with a small limit, so it's a fast check rather than requiring a multi-thousand-document
+real indexing run to exercise the batching path.
+
+Also confirmed the corpus-ID overlap fix worked and re-ran the eval; full real numbers are
+in the entry after tracing (see below — wanted the batch-size fix in before trusting the
+run). `docs/cpc_scope.md`'s "scope discipline" note already anticipated the corpus growing
+as real needs emerged ("changing this later... not a day-one decision") — this expansion is
+exactly that: driven by a concrete requirement (recall@k needing reachable ground truth), not
+scope creep. Noted in passing: the seed query's lack of `ORDER BY` also means re-running
+`ingest_corpus.py` doesn't return a stable seed set run to run (280 vs. 291 patents across
+two runs with the same `corpus_size`) — a known minor nondeterminism, not fixed now since
+nothing in the pipeline currently depends on seed-set stability across runs.
+
+3 new tests in `tests/test_bigquery_client.py` for `fetch_patents_by_id` (empty-list
+short-circuit without querying, plus 2 live tests: a known real patent ID resolves
+correctly, an unknown ID returns empty rather than erroring). Full suite: 159 passed.
+

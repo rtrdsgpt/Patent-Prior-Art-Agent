@@ -77,8 +77,14 @@ def build_embedding_index(
             documents.append(claim_to_index_chunk(claim, patent.title))
             metadatas.append({"patent_id": patent.patent_id, "claim_number": claim.claim_number})
 
-    if ids:
-        collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
+    # Chroma rejects a single upsert() beyond its own max batch size (a real limit hit while
+    # indexing a citation-expanded ~1500-patent corpus — a small fixture/seed-only corpus
+    # never had enough claim chunks to reach it). Batch rather than raise it as a surprise
+    # once the corpus grows past whatever this Chroma version's limit happens to be.
+    batch_size = client.get_max_batch_size()
+    for start in range(0, len(ids), batch_size):
+        end = start + batch_size
+        collection.upsert(ids=ids[start:end], documents=documents[start:end], metadatas=metadatas[start:end])
 
     return collection
 

@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock
+
 import pytest
 
 from ingestion.fixtures import load_fixture_patents
@@ -35,3 +37,21 @@ def test_dense_search_scores_are_descending(collection):
 def test_dense_search_sets_retrieval_method(collection):
     results = dense_search(collection, "neural network", top_k=1)
     assert results[0].retrieval_method == "dense"
+
+
+def test_build_embedding_index_batches_upsert_beyond_max_batch_size():
+    # A real Chroma client rejects a single upsert() beyond its own max batch size --
+    # confirmed by actually hitting it while indexing a ~1500-patent corpus (see log.md).
+    # Uses a mocked client with a small limit so this stays a fast check, not a
+    # multi-thousand-document indexing run.
+    mock_collection = MagicMock()
+    mock_client = MagicMock()
+    mock_client.get_max_batch_size.return_value = 3
+    mock_client.get_or_create_collection.return_value = mock_collection
+
+    patents = load_fixture_patents()  # 8 patents, well over 3 claim-chunks combined
+    build_embedding_index(patents, client=mock_client)
+
+    assert mock_collection.upsert.call_count > 1
+    for call in mock_collection.upsert.call_args_list:
+        assert len(call.kwargs["ids"]) <= 3
