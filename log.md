@@ -577,3 +577,34 @@ rejected at construction, `build_groq_client()` reads `Settings` correctly. Plus
 Credentials are now fully unblocked (BigQuery *and* Groq) — the next real todo.md work is
 section 2's actual agents (disclosure-parser, search, claims-parser, comparison,
 risk-report), which is the biggest remaining chunk of the project.
+
+## 2026-08-16 — Disclosure-parser agent: the first real LLM pipeline stage
+
+Added `agents/disclosure_parser.py` (`parse_disclosure()`): free-text invention disclosure
+→ populated `InventionDisclosure` (`technical_field`, `key_elements`,
+`candidate_cpc_classes`) via Groq JSON mode. `schema.py`'s `InventionDisclosure` already had
+these three fields sitting unset since the initial scaffolding commit, with a docstring
+pointing at `agents/disclosure_parser.py` — this is the first agent that actually fills them.
+
+**JSON mode is not schema validation — confirmed this distinction matters, didn't just
+assume it.** Groq's `response_format={"type": "json_object"}` guarantees syntactically valid
+JSON, not that it has the three keys this pipeline needs in the right shapes (e.g. the model
+could return `key_elements` as a string instead of an array). So `parse_disclosure()` still
+runs the parsed JSON through `InventionDisclosure(...)` construction and catches
+`ValidationError`/`KeyError`/`TypeError`/`JSONDecodeError` as one bounded-retry class: on
+failure, the bad response and a correction request go back into the message history and it
+tries once more (`_MAX_ATTEMPTS = 2`), then raises clearly rather than looping — same
+bounded-retry discipline as the Groq client's key rotation and the (still-upcoming) search
+agent's query expansion.
+
+**Verified live, both the happy path and that live output is actually sensible, not just
+schema-shaped:** ran a real disclosure ("CNN with dropout regularization on fully-connected
+layers...") through the live model and asserted the extracted `key_elements` actually
+mentions "dropout" — checking that the LLM call succeeds isn't the same as checking it
+extracted something *correct*, and a schema-valid-but-wrong response would have passed a
+weaker test.
+
+6 tests in `tests/test_disclosure_parser.py`: 5 fast unit tests against a mocked
+`RotatingGroqClient` (populated happy path, correct model/JSON-mode passed to the client,
+retry-then-succeed on malformed JSON, retry-then-succeed on a missing key, raises after
+exhausting retries) plus 1 live `integration` test. Full suite: 90 passed.
