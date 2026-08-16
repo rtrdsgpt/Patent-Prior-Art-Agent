@@ -2,6 +2,10 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
+# git is needed for requirements.txt's `grounded-evals @ git+https://...` entry — not in
+# the slim base image by default.
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+
 # Install deps in their own layer so `docker build` doesn't re-download torch/transformers
 # (the bulk of the image) on every source change.
 COPY requirements.txt ./

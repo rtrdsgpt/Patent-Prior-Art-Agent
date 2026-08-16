@@ -824,3 +824,50 @@ Todo.md section 2 is now fully built. Section 3 (API) is real end to end. Remain
 sections 4 (Airflow/MLflow/DVC — Docker's already done), 5 (recall@k eval — now finally
 possible with 149/291 real patents carrying genuine examiner citations), 6 (tracing), and
 broader test coverage per section 7.
+
+## 2026-08-16 — User said keep going; caught a self-inflicted duplication before starting section 5
+
+Before building the recall@k eval harness, checked what the sibling `grounded-evals` package
+(already a dependency per `requirements-dev.txt`, and named in this project's own `README.md`
+as the intended home for shared "retrieval/citation-verification metrics... across the rest
+of the portfolio") actually provides. It has `evaluate_retrieval()`/`recall_at_k()` — exactly
+section 5's requirement — and, importantly, `verify_citation()`: a citation-verification
+function doing the same job as `agents/citation_guard.py`, which I'd built from scratch
+earlier this session without checking this package first.
+
+**Refactored `citation_guard.py` to delegate to `grounded_evals.verify_citation` instead of
+its own hand-rolled whitespace-normalize-and-substring-check.** This project's own README
+already committed to sharing this exact kind of check across the portfolio; hand-rolling a
+second implementation was duplicating precisely what that package exists to prevent — a
+mismatch between what I'd built and what the project's own documented architecture said
+should happen, worth fixing before adding more code on top of the wrong foundation. The
+shared version is also strictly more capable (case-insensitive, plus a fuzzy-match fallback
+via `difflib` for punctuation/quoting drift beyond plain whitespace), gained for free.
+
+**This surfaced a real deployability gap: `grounded-evals` was only ever a local editable
+dependency (`-e ../grounded-evals`), and citation_guard.py is now a core runtime module, not
+just a test/eval concern.** The Docker image's build context is this repo only — it can't
+reach a sibling directory outside it — so if left as-is, the built image would have shipped
+without `grounded-evals` installed at all and failed at import time on the very first API
+request. Checked whether `grounded-evals` has its own remote before deciding how to fix
+this (`git remote -v` in that repo) — it does, already pushed to a **public** GitHub repo
+(`rtrdsgpt/grounded-evals`, confirmed public via `gh repo view`, so no auth needed to fetch
+it). Pinned `requirements.txt` to `grounded-evals @ git+https://github.com/rtrdsgpt/
+grounded-evals.git` instead of the local path; `requirements-dev.txt`'s existing `-e
+../grounded-evals` (processed after `-r requirements.txt`) still takes over for local dev,
+so edits to that sibling project keep applying immediately without a push, only the
+Docker/production path changed.
+
+**Verified the git+https install actually works before trusting it in the Dockerfile** —
+`python:3.13-slim` doesn't ship `git`, confirmed by running `which git` in a throwaway
+container, so a `pip install` of a `git+https://...` requirement would have failed partway
+through the image build with a confusing "git: command not found" rather than a clear
+dependency error. Added `apt-get install git` to the `Dockerfile` before the pip install
+layer. Also ran `pip install --dry-run` against the actual GitHub URL locally to confirm it
+resolves and builds before relying on it inside Docker, rather than assuming the URL syntax
+was right.
+
+No test changes needed — `citation_guard.py`'s existing 9 tests exercise its own
+`verify_citations()` contract (which comparisons pass/fail, the patent-ID guard, no
+mutation), not the internals of whichever text-matching function it delegates to. Full
+suite: 145 passed (unchanged).

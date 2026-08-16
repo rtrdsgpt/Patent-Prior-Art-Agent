@@ -21,4 +21,12 @@ uvicorn[standard]>=0.29.0
 # MCP tool exposure (added in section 8)
 mcp>=2.0.0
 
+# Shared retrieval/citation-verification scoring toolkit across the CV portfolio. A real
+# runtime dependency, not just for the eval harness (section 5) — agents/citation_guard.py
+# uses it directly. Pinned to GitHub (public repo) rather than a local `-e ../grounded-evals`
+# path here, since this file also drives the Docker image, which can't reach a sibling
+# directory outside its build context; requirements-dev.txt's `-e ../grounded-evals`
+# (installed after this) takes over for local dev so edits there apply without a push.
+grounded-evals @ git+https://github.com/rtrdsgpt/grounded-evals.git
+
 python-dotenv>=1.0.0
