@@ -1,9 +1,10 @@
 # Patent Prior-Art / Freedom-to-Operate Agent — TODO
 
-New greenfield project: given an invention disclosure, find and analyze real prior art from actual
-patent data and produce a grounded novelty/infringement-risk report. This folder is currently
-empty — this is your Agentic/GenAI/LLM CV flagship. See `Project Plan.md` (Projects root)
-section 4 for full architecture rationale.
+Given an invention disclosure, find and analyze real prior art from actual patent data and
+produce a grounded novelty/infringement-risk report. See `Project Plan.md` (Projects root)
+section 4 for full architecture rationale. **All sections below are now built** — see
+`README.md` for the current system overview and `log.md` for the full build history/
+reasoning behind every decision.
 
 ## 0. Data source setup
 - [x] ~~Register/test access to the **USPTO PatentsView API**~~ — superseded: switched to
@@ -18,8 +19,11 @@ section 4 for full architecture rationale.
 
 ## 1. Ingestion / RAG index (build this before the agents)
 - [x] Download/ingest a corpus subset of patents in the target CPC class — real BigQuery
-      ingestion (`ingestion/bigquery_client.py`, `ingestion/ingest_corpus.py`), 291 patents
-      cached to `data/corpus.json` (gitignored; see section 4's DVC item).
+      ingestion (`ingestion/bigquery_client.py`, `ingestion/ingest_corpus.py`). Grew from an
+      initial 291-patent CPC-scoped seed to 1488 patents once citation-aware expansion
+      (`fetch_patents_by_id`) landed — see section 5, the seed alone had ~0% chance of
+      containing any patent's own cited prior art. Cached to `data/corpus.json`, DVC-tracked
+      (section 4).
 - [x] Claim-level chunking (a natural, legally meaningful chunk boundary) —
       `ingestion/chunking.py`.
 - [x] Embed + index in a vector DB (Chroma) — `retrieval/embedding_index.py`.
@@ -49,21 +53,34 @@ section 4 for full architecture rationale.
 - [x] Docker/docker-compose: app + vector DB — `Dockerfile`/`docker-compose.yml`, verified
       end-to-end. (Skipped the "optional local embedding server" — embedding already runs
       in-process, so a dedicated service has no consumer.)
-- [ ] **Airflow**: scheduled incremental ingestion DAG for new patents in the target CPC classes
-      (download → clean → chunk → embed → index)
-- [ ] **MLflow**: track retrieval/reranking experiments (embedding models, chunking strategies)
-      and log report-generation runs
-- [ ] **DVC**: version the ingested patent corpus subset and embedding indices
+- [x] **Airflow**: scheduled ingestion DAG — `dags/ingest_corpus_dag.py`
+      (`ingest_corpus >> embed_and_index`), own container (`Dockerfile.airflow`), verified
+      with a real `airflow dags test` run against live BigQuery, not just a successful image
+      build. "Incremental" means re-running the same bounded fetch on a schedule, not a true
+      watermark-based delta load — see the DAG's own docstring for why.
+- [x] **MLflow**: `experiment_tracking.py` — every eval run (`run_eval.py`) and every real
+      report-generation run (`orchestrator.py`) logged to a local SQLite-backed store.
+- [x] **DVC**: `data/corpus.json` tracked (`.dvc/config`, local remote,
+      `data/corpus.json.dvc`); `chroma_db/` set up the same way, tracked once a persistent
+      index exists on disk.
 
 ## 5. Evaluation (the differentiator — real ground truth)
-- [ ] Build an eval set from patents with known examiner-cited prior art — now unblocked:
-      149/291 ingested patents carry real examiner (`SEA`-category) citations.
-- [ ] Run the search+comparison pipeline on those disclosures, score **recall@k** against the
-      actual examiner citations — a rigorous, defensible eval design, not just an LLM-judge score
+- [x] Build an eval set from patents with known examiner-cited prior art —
+      `evaluation/recall_eval.py`'s `build_eval_set()`.
+- [x] Run search, score **recall@k** against actual examiner citations —
+      `evaluation/run_eval.py` (`python -m evaluation.run_eval`). Real results over the full
+      1488-patent corpus, 811 eval cases: overall recall@10 0.087 (honest — reflects corpus
+      coverage, most citations point outside this deliberately small corpus), in-corpus
+      recall@10 0.372 / MRR 0.438 (the real retrieval-quality signal, isolated from corpus
+      coverage). Full reasoning for the two-metric design in that module's docstring.
 
 ## 6. Tracing
-- [ ] OpenTelemetry/Langfuse spans per agent step (search → parse → compare → verify)
-- [ ] Explicitly trace the citation-verification guard as a checked step
+- [x] OpenTelemetry spans per agent step — `tracing.py`'s `@traced`, applied to every stage;
+      console exporter (no Langfuse/OTLP backend credentials available, but real/inspectable
+      on its own — see `tracing.py`'s docstring for swapping in a real backend later).
+- [x] Citation-verification guard explicitly traced as a checked step —
+      `agents/citation_guard.py` sets `patent_id`/`num_comparisons_checked`/
+      `citation_verified` as span attributes directly, not just a generic pass/fail span.
 
 ## 7. Testing
 - [x] pytest for the claims-parser's structured output — `tests/test_claims_parser.py`.
@@ -72,8 +89,9 @@ section 4 for full architecture rationale.
 - [x] Integration test over a small fixed patent set with a mocked LLM —
       `tests/test_orchestrator.py`'s non-live tests run the full orchestrator over the
       fixture corpus with every agent function mocked; per-agent unit tests
-      (`test_disclosure_parser.py` etc.) additionally mock at the Groq-client level. 145
-      tests total (`pytest -m slow`/`-m integration` opt-in for real models/live APIs).
+      (`test_disclosure_parser.py` etc.) additionally mock at the Groq-client level. 172
+      tests total (`pytest -m slow`/`-m integration` opt-in for real models/live APIs; 1
+      Airflow-DAG test skips outside that image by design — see `log.md`).
 
 ## 8. MCP
 - [x] Expose `search-prior-art` as an MCP tool — `mcp_server.py`.
