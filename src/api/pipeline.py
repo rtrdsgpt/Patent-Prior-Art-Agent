@@ -1,10 +1,10 @@
 """What the `/disclosure/analyze` job actually runs today.
 
-Only the retrieval half of todo.md's pipeline exists right now: hybrid search + reranking
-over the indexed corpus (todo.md section 1). The disclosure-parser, comparison, and
-risk-report agents (section 2) are paused pending a Groq API key (see log.md) — so a job
-currently produces a ranked candidate prior-art list, not a full `FTOReport`. The
-`/report/{job_id}` route reflects that honestly (501) rather than fabricating a report.
+Retrieval (todo.md section 1) plus the first two section-2 agents — disclosure-parser and
+search — are wired in now that Groq credentials are available. The claims-parser,
+comparison, and risk-report agents aren't built yet, so a job still produces a ranked
+candidate prior-art list, not a full `FTOReport`. The `/report/{job_id}` route reflects that
+honestly (501) rather than fabricating a report.
 
 Corpus comes from `ingestion.corpus.load_corpus()` — the real BigQuery-ingested cache if
 one has been generated, else the fixture set. See that module's docstring for why the swap
@@ -18,12 +18,12 @@ from functools import lru_cache
 import chromadb
 from chromadb.api.models.Collection import Collection
 
+from agents.disclosure_parser import parse_disclosure
+from agents.search_agent import search_prior_art
 from config.settings import Settings, get_settings
 from ingestion.corpus import load_corpus
 from retrieval.bm25_index import BM25Index, build_bm25_index
 from retrieval.embedding_index import build_embedding_index
-from retrieval.hybrid import hybrid_search
-from retrieval.reranker import rerank
 from schema import Patent, SearchResult
 
 
@@ -49,15 +49,12 @@ def _get_indexes() -> tuple[BM25Index, Collection, dict[str, Patent]]:
 
 
 def run_prior_art_search(disclosure_text: str) -> list[SearchResult]:
-    """Hybrid search + rerank the disclosure's raw text against the indexed corpus.
-
-    Uses the raw disclosure text directly as the query, since the disclosure-parser agent
-    that would extract structured elements/candidate CPC classes from it doesn't exist yet.
-    Real once agents land: the retrieval call itself doesn't change, only what query text
-    feeds into it.
+    """Parse the disclosure, then hybrid search + rerank (with adaptive query expansion)
+    against the indexed corpus. Makes real Groq calls now that credentials exist — see
+    `agents/disclosure_parser.py` and `agents/search_agent.py`.
     """
     settings = get_settings()
     bm25_index, embedding_collection, patents_by_id = _get_indexes()
 
-    candidates = hybrid_search(bm25_index, embedding_collection, disclosure_text, settings=settings)
-    return rerank(disclosure_text, candidates, patents_by_id, settings=settings)
+    disclosure = parse_disclosure(disclosure_text, settings=settings)
+    return search_prior_art(disclosure, bm25_index, embedding_collection, patents_by_id, settings=settings)

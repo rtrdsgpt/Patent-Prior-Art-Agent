@@ -608,3 +608,71 @@ weaker test.
 `RotatingGroqClient` (populated happy path, correct model/JSON-mode passed to the client,
 retry-then-succeed on malformed JSON, retry-then-succeed on a missing key, raises after
 exhausting retries) plus 1 live `integration` test. Full suite: 90 passed.
+
+## 2026-08-16 — Prior-art search agent, wired into the API, and a real perf bug found
+
+Added `agents/search_agent.py` (`search_prior_art()`): the second section-2 agent. Reuses
+`retrieval/hybrid.py` and `retrieval/reranker.py` completely unchanged — this agent's actual
+job is query *construction* from the disclosure-parser's structured output, plus the
+adaptive-query-expansion retry todo.md calls for, not new retrieval mechanics.
+
+**Adaptive expansion is deterministic, not another LLM call — a deliberate trade-off.**
+Considered having the agent call the LLM again to rewrite a too-narrow/too-broad query, which
+is the more literal reading of "adaptive query expansion." Went with a fixed 3-query sequence
+built from fields the disclosure-parser already extracted instead (medium: technical_field +
+all key_elements; broad: technical_field alone; narrow: technical_field + first two
+key_elements): it's real and testable without mocking another LLM call, it's free (no extra
+Groq call/rate-limit exposure per search), and it reuses data already paid for in the
+disclosure-parser step rather than asking the model to reinvent it. Bounded to those 3 fixed
+attempts — same discipline as the Groq client's key rotation and the disclosure-parser's
+retry loop: try a small fixed set, then stop and return the best attempt.
+
+**"Too few/too many" is judged by reranked score, not result count** — `rerank_top_k`
+already caps the returned list at a fixed size, so count alone can't signal over-broad vs.
+over-narrow. Cross-encoder scores are logit-style and roughly centered on 0 for relevance
+(observed range roughly -12 to +10 across `reranker.py`'s tests), so "how many of the
+returned results score above 0" is a real, if heuristic, proxy for "how many look plausibly
+relevant." `_MIN_RELEVANT=1`/`_MAX_RELEVANT=8` are starting points, explicitly flagged in
+the docstring as unvalidated against ground truth — section 5's recall@k eval is what would
+actually justify or adjust these numbers once it exists, not intuition.
+
+Wired `api/pipeline.py`'s `run_prior_art_search()` to actually call `parse_disclosure()` then
+`search_prior_art()` instead of using the raw disclosure text as the query — the placeholder
+both this module's and `agents/disclosure_parser.py`'s docstrings had been pointing at since
+they were written. Updated `api/app.py`'s 501 report message accordingly (it previously said
+the comparison/risk-report agents were "paused pending a Groq API key," which stopped being
+true this session — now it correctly says they aren't built yet, a different and more
+accurate reason).
+
+**Real bug found by actually running the wired-up pipeline end-to-end, not by inspection:**
+ran `run_prior_art_search()` against the real 291-patent corpus and noticed repeated
+"Loading weights" output — the cross-encoder reranker was reloading its model from scratch
+on every single `rerank()` call. Traced it to `reranker.py`'s own default path: `model = model
+or CrossEncoder(settings.reranker_model)` constructs fresh every time `model` isn't passed,
+and nothing was passing it — the parameter existed (with a docstring claiming callers "can
+load the cross-encoder once and reuse it") but no caller actually did. Harmless before this
+session (reranking only ran once per test), but now that `search_agent.py`'s adaptive retry
+can call `rerank()` up to 3 times per search, and the API calls this per user request, it was
+a real, request-scaling cost. Fixed with `_default_model()`, an `lru_cache`-keyed-by-model-
+name helper, used as the default when `model` isn't explicitly injected (tests still inject
+stubs directly, unaffected). Confirmed the fix with a repeat-call trace: 3 `rerank()` calls
+in one process now trigger exactly 1 model load, not 3.
+
+**Investigated a second "Loading weights" source and concluded it wasn't worth fixing.**
+`build_embedding_index()` was also printing multiple "Loading weights" lines. Traced it with
+instrumented `__call__`/`build_from_config` methods on the embedding function: Chroma calls
+`build_from_config()` (the method added earlier this session to silence a deprecation
+warning — see that log entry) a few times *during collection setup* — likely internal
+config-round-trip validation — but the actual embedding computation (`__call__`) reuses one
+consistent instance across both index-build and every subsequent query. So this cost is
+one-time per process (paid once when `_get_indexes()` populates its cache), not per-request
+like the reranker bug was — not worth adding complexity to avoid a bounded, non-scaling cost.
+Noting the investigation and the reasoning for *not* fixing it, since concluding something
+isn't worth fixing is still a real decision, not the same as not checking.
+
+10 new tests: 3 for `_candidate_queries`' exact query construction, 5 for
+`search_prior_art`'s retry/early-exit/best-attempt logic (hybrid_search/rerank monkeypatched
+to control relevance counts directly — this agent's orchestration logic, not retrieval
+correctness, is what's under test here), 1 `slow`-marked real end-to-end test over the
+fixture corpus. Updated `test_api.py`'s 501-message assertion to match the corrected wording.
+Full suite: 98 passed.

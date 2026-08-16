@@ -10,10 +10,21 @@ hybrid stage's already-narrowed candidate list. See todo.md section 1.
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 from sentence_transformers import CrossEncoder
 
 from config.settings import Settings, get_settings
 from schema import Patent, SearchResult
+
+
+@lru_cache
+def _default_model(model_name: str) -> CrossEncoder:
+    """Cached per model name so the default (no `model=` passed) path doesn't reload the
+    cross-encoder from disk on every call — real cost once `search_agent.py`'s adaptive
+    retry can call `rerank()` up to 3 times in one search, discovered by actually running
+    the wired-up pipeline end-to-end, not by inspection."""
+    return CrossEncoder(model_name)
 
 
 def _patent_document_text(patent: Patent) -> str:
@@ -33,12 +44,12 @@ def rerank(
 ) -> list[SearchResult]:
     """Rerank `candidates` with a cross-encoder, returning the top `settings.rerank_top_k`.
 
-    `model` is accepted as a parameter (rather than always constructed internally) so
-    callers running many reranks in a session can load the cross-encoder once and reuse it —
-    it's a real model load, not a cheap lookup.
+    `model` is accepted as a parameter mainly for tests that want to inject a stub; the
+    default path reuses a process-wide cached model (`_default_model`) keyed by model name,
+    since constructing a fresh `CrossEncoder` is a real model load, not a cheap lookup.
     """
     settings = settings or get_settings()
-    model = model or CrossEncoder(settings.reranker_model)
+    model = model or _default_model(settings.reranker_model)
 
     scoreable = [c for c in candidates if c.patent_id in patents_by_id]
     if not scoreable:

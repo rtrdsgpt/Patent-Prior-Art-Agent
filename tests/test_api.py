@@ -49,7 +49,7 @@ def test_report_returns_501_with_candidates_for_completed_job(client):
     response = client.get(f"/report/{job_id}")
     assert response.status_code == 501
     detail = response.json()["detail"]
-    assert "comparison and risk-report agents" in detail["message"]
+    assert "comparison, and risk-report agents" in detail["message"]
     assert detail["candidate_patents"][0]["patent_id"] == "US10000001B2"
 
 

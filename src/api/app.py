@@ -70,15 +70,15 @@ def get_report(job_id: str):
     if job.status == "failed":
         raise HTTPException(status_code=500, detail=f"Job {job_id} failed: {job.error}")
 
-    # job.status == "completed": retrieval succeeded, but comparison/risk-report agents
-    # (todo.md section 2) aren't wired in yet, so there is no FTOReport to return. 501, not
-    # a fabricated report — see pipeline.py.
+    # job.status == "completed": search succeeded, but the claims-parser/comparison/
+    # risk-report agents (todo.md section 2) aren't built yet, so there is no FTOReport to
+    # return. 501, not a fabricated report — see pipeline.py.
     raise HTTPException(
         status_code=501,
         detail={
             "message": (
-                "Full FTO report generation requires the comparison and risk-report "
-                "agents (todo.md section 2), which are paused pending a Groq API key."
+                "Full FTO report generation requires the claims-parser, comparison, and "
+                "risk-report agents (todo.md section 2), which aren't built yet."
             ),
             "candidate_patents": [c.model_dump(mode="json") for c in job.candidate_patents],
         },
