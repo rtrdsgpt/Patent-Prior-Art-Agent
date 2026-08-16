@@ -1,0 +1,16 @@
+FROM apache/airflow:2.10.3-python3.11
+
+# Only what ingest_corpus_dag.py's two tasks actually import (ingestion + embedding-index
+# code paths) — not the full app requirements.txt (fastapi/mcp/groq/grounded-evals/mlflow
+# aren't reachable from this DAG's imports, see its own docstring for why; leaving them out
+# keeps this image smaller and avoids exposing this DAG to unrelated dependency conflicts).
+COPY requirements-airflow.txt /tmp/requirements-airflow.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-airflow.txt
+
+COPY src /opt/airflow/patent_agent_src
+ENV PYTHONPATH=/opt/airflow/patent_agent_src:$PYTHONPATH
+
+# Same reasoning as the main Dockerfile — ingestion/fixtures.py's fallback corpus path isn't
+# actually reachable from this DAG (it always writes a real cache via ingest_corpus.main()),
+# but keeping the module importable without a missing-file surprise costs nothing.
+COPY tests/fixtures /opt/airflow/tests/fixtures

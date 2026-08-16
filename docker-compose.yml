@@ -19,5 +19,34 @@ services:
     ports:
       - "8080:8000"
 
+  # Scheduled ingestion DAG (todo.md section 4) — see dags/ingest_corpus_dag.py and
+  # Dockerfile.airflow. `standalone` is Airflow's own single-command quick-start (SQLite +
+  # SequentialExecutor, webserver + scheduler together, creates an admin user on first run)
+  # — appropriate for one low-frequency DAG; swap for LocalExecutor + Postgres if this ever
+  # needs real task concurrency.
+  airflow:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    command: standalone
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - airflow_data:/opt/airflow/data
+      - airflow_chroma:/opt/airflow/chroma_db
+      # Reuses the host's `gcloud auth application-default login` credentials (see log.md)
+      # rather than requiring a separate service-account key just for this container.
+      - ${HOME}/.config/gcloud:/home/airflow/.config/gcloud:ro
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      GOOGLE_APPLICATION_CREDENTIALS: /home/airflow/.config/gcloud/application_default_credentials.json
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      TARGET_CPC_CLASS: ${TARGET_CPC_CLASS:-G06N3}
+      CORPUS_CACHE_PATH: /opt/airflow/data/corpus.json
+      CHROMA_PERSIST_DIRECTORY: /opt/airflow/chroma_db
+    ports:
+      - "8081:8080"
+
 volumes:
   chroma_data:
+  airflow_data:
+  airflow_chroma:

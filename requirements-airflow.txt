@@ -1,0 +1,19 @@
+# Deps for dags/ingest_corpus_dag.py's two tasks only — see Dockerfile.airflow and the
+# DAG's own docstring for why this is narrower than the main requirements.txt.
+
+# CPU-only torch — see the same directive in requirements.txt for why (real, measured cost:
+# the unpinned default pulled 2GB+ of unused CUDA wheels building this exact image).
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# Data models / settings
+pydantic>=2.7.0
+pydantic-settings>=2.3.0
+python-dotenv>=1.0.0
+
+# ingest_corpus task
+google-cloud-bigquery>=3.25.0
+db-dtypes>=1.2.0
+
+# embed_and_index task
+chromadb>=0.5.0
+sentence-transformers>=2.2.0

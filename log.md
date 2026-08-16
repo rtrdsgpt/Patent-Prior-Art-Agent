@@ -1052,3 +1052,74 @@ at an isolated per-test SQLite file (`tmp_path`) and then read the logged run ba
 `mlflow.search_runs()` to assert on actual recorded params/metrics, not just that
 `mlflow.log_metric(...)` was called with the right arguments. 6 tests. 172 tests collected
 total (1 always-skips by design in this venv — see next entry).
+
+## 2026-08-16 — Airflow (todo.md section 4), verified with a real live DAG run
+
+Added `dags/ingest_corpus_dag.py` (two tasks: `ingest_corpus`, then `embed_and_index`, wired
+`ingest_task >> embed_task`) and a dedicated `Dockerfile.airflow` (`apache/airflow:2.10.3-
+python3.11` base) plus `requirements-airflow.txt`. **Deliberately not installed into this
+project's main venv/`requirements.txt`** — Airflow runs in its own container by design, both
+because that's the architecturally correct separation (a scheduler isn't a runtime dependency
+of the API) and because pip actually tried to uninstall/replace several of Airflow's own
+bundled packages (`click`, `packaging`, `opentelemetry-*`, `protobuf`) while resolving our
+requirements inside the image — confirmed this happening in real build output, not a
+hypothetical risk. Kept `requirements-airflow.txt` deliberately narrower than the main app's
+`requirements.txt` (no `fastapi`/`mcp`/`groq`/`grounded-evals`/`mlflow` — none of those are
+reachable from what the DAG's two tasks actually import), which also limits how much of that
+same conflict surface gets exercised.
+
+**Both task bodies call the same functions the manual CLI paths already use**
+(`ingestion.ingest_corpus.main()`, `retrieval.embedding_index.build_embedding_index()`) —
+this DAG is a scheduling wrapper around the one real ingestion/indexing path, not a second,
+DAG-specific reimplementation. Documented two scope calls directly in the DAG's own
+docstring rather than silently overclaiming: "incremental" here means "re-run the same
+bounded seed+expand fetch on a schedule," not a true delta/watermark load, because the seed
+query has no stable ordering to track a cursor against (same nondeterminism noted in the
+citation-expansion entry above); and a freshly re-indexed on-disk Chroma index isn't picked
+up by an already-running API process without a restart, since `_get_indexes()` caches once
+per process — hot-reloading is out of scope here.
+
+**Verified with a real live DAG run, not just a successful image build.** `docker build`
+succeeding proves the image assembles; it doesn't prove the DAG parses or that its tasks
+actually do anything. Ran `airflow db init && airflow dags test ingest_corpus_dag
+<date>` inside the built image (a real one-shot task-execution check, lighter than standing
+up the full webserver+scheduler `standalone` deployment but not a lesser check — it runs the
+actual task callables, which is what matters here), pointed at a small isolated
+`corpus_size=5` and a separate `CORPUS_CACHE_PATH`/`CHROMA_PERSIST_DIRECTORY` so it wouldn't
+touch or destabilize the real, carefully-built 1488-patent corpus. Mounted the host's
+`gcloud auth application-default login` credentials (`~/.config/gcloud`, read-only) into the
+container rather than requiring a separate service-account key just for this. Both tasks
+reported `state=success`, with real log lines confirming genuine work
+("Fetched 5 seed patents with parseable claims", "Wrote 5 total patents to corpus cache").
+
+**Real, measured inefficiency found and fixed along the way:** the built image was 10.5GB
+(3.49GB content) — `docker build` was pulling the default CUDA-enabled `torch` wheel (a
+`sentence-transformers` dependency) on the Linux container target, downloading several
+individual nvidia_* wheels north of 400MB each, for a container with no GPU that will ever
+use them. Added `--extra-index-url https://download.pytorch.org/whl/cpu` to both
+`requirements.txt` and `requirements-airflow.txt` (this also benefits the main app image, not
+just Airflow's). Rebuilt and confirmed: 776MB content / 3.81GB total — a 77% reduction.
+Chose not to re-run the full live `airflow dags test` a second time against this rebuilt
+image before committing (mid-verification, decided together with the user to clean up
+Docker's local disk footprint first — see below — rather than keep piling on more large
+image builds in the same session); the change itself only swaps which `torch` wheel variant
+resolves, not any application code, so the risk this silently broke DAG behavior is low, but
+that's a judgment call worth being explicit about rather than quietly implying it was
+re-verified when it wasn't.
+
+**Docker cleanup.** By this point in the session, cumulative image/build-cache usage from
+every Dockerfile iteration (main app ×2, Airflow ×3 variants) had reached ~44GB images +
+~36GB build cache. Asked the user before reclaiming it rather than assuming — freeing local
+disk is generally safe/reversible (rebuildable on demand) but is still the user's call on
+their own machine, and other unrelated projects' containers (DatoScope V2, etc.) were
+running on the same Docker daemon and needed to be left untouched. Removed only this
+session's own `patent-agent-airflow:test`/`:cpu` tags and ran `docker builder prune`,
+confirmed the untouched images afterward were all pre-existing/unrelated-project images, not
+anything from this build.
+
+New tests: `tests/test_ingest_corpus_dag.py` (4 tests, `pytest.importorskip("airflow")` —
+skips in this venv by design, since Airflow isn't installed here; would run for real inside
+the Airflow image or a CI job that installs `requirements-airflow.txt`). `docker-compose.yml`
+gained an `airflow` service (`airflow standalone` — SQLite + `SequentialExecutor`,
+appropriate for one low-frequency DAG) for the "real deployment" story, distinct from the
+one-shot `dags test` verification path used above.
