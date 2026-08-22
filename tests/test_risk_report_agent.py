@@ -14,15 +14,9 @@ DISCLOSURE = InventionDisclosure(
 )
 
 
-def _fake_response(content: str):
-    response = MagicMock()
-    response.choices[0].message.content = content
-    return response
-
-
 def _client_returning(content: str) -> MagicMock:
     client = MagicMock()
-    client.chat_completion.return_value = _fake_response(content)
+    client.invoke.return_value = MagicMock(content=content)
     return client
 
 
@@ -56,7 +50,7 @@ def test_generate_risk_report_handles_no_assessments():
     report = generate_risk_report(DISCLOSURE, [], client=client)
 
     assert report.assessments == []
-    user_prompt = client.chat_completion.call_args.kwargs["messages"][1]["content"]
+    user_prompt = client.invoke.call_args.kwargs["messages"][1]["content"]
     assert "No candidate prior art was assessed" in user_prompt
 
 
@@ -66,7 +60,7 @@ def test_generate_risk_report_prompt_labels_verified_assessment():
 
     generate_risk_report(DISCLOSURE, [assessment], client=client)
 
-    user_prompt = client.chat_completion.call_args.kwargs["messages"][1]["content"]
+    user_prompt = client.invoke.call_args.kwargs["messages"][1]["content"]
     assert "VERIFIED" in user_prompt
     assert "UNVERIFIED" not in user_prompt
 
@@ -77,7 +71,7 @@ def test_generate_risk_report_prompt_flags_unverified_assessment():
 
     generate_risk_report(DISCLOSURE, [assessment], client=client)
 
-    user_prompt = client.chat_completion.call_args.kwargs["messages"][1]["content"]
+    user_prompt = client.invoke.call_args.kwargs["messages"][1]["content"]
     assert "UNVERIFIED" in user_prompt
     assert "citation verification failed" in user_prompt
 
@@ -94,7 +88,7 @@ def test_generate_risk_report_prompt_omits_overlap_details_for_unverified_assess
 
     generate_risk_report(DISCLOSURE, [assessment], client=client)
 
-    user_prompt = client.chat_completion.call_args.kwargs["messages"][1]["content"]
+    user_prompt = client.invoke.call_args.kwargs["messages"][1]["content"]
     assert "a very specific unverified claim detail" not in user_prompt
 
 
@@ -108,7 +102,7 @@ def test_generate_risk_report_no_overlap_found_is_still_labeled_verified():
 
     generate_risk_report(DISCLOSURE, [assessment], client=client)
 
-    user_prompt = client.chat_completion.call_args.kwargs["messages"][1]["content"]
+    user_prompt = client.invoke.call_args.kwargs["messages"][1]["content"]
     assert "no substantial overlap found" in user_prompt
 
 
@@ -127,5 +121,12 @@ def test_generate_risk_report_live_groq_call():
 
     report = generate_risk_report(DISCLOSURE, [verified, unverified], settings=settings)
 
-    assert "US1234567A1" in report.summary
+    # openai/gpt-oss-120b (unlike the previous default model) sometimes writes patent
+    # numbers with narrow no-break spaces between the letters/digits (e.g. "US 1234567
+    # A1") -- cosmetic prose formatting only, the actual grounded data lives in the
+    # structured assessments, not this summary (see the module's own docstring on why the
+    # summary isn't authoritative). Normalize whitespace before checking rather than fight
+    # the model's formatting of a free-text field.
+    normalized_summary = " ".join(report.summary.split())
+    assert "US 1234567 A1" in normalized_summary or "US1234567A1" in normalized_summary
     assert "hallucinated finding" not in report.summary

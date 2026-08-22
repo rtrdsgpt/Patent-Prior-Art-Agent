@@ -1,35 +1,25 @@
-import json
 from unittest.mock import MagicMock
 
 import pytest
 
-from agents.disclosure_parser import parse_disclosure
-from config.settings import Settings, get_settings
+from agents.disclosure_parser import _DisclosureExtraction, parse_disclosure
+from config.settings import get_settings
 
-
-def _fake_response(content: str):
-    response = MagicMock()
-    response.choices[0].message.content = content
-    return response
-
-
-def _client_returning(*contents: str) -> MagicMock:
-    client = MagicMock()
-    client.chat_completion.side_effect = [_fake_response(c) for c in contents]
-    return client
-
-
-VALID_JSON = json.dumps(
-    {
-        "technical_field": "Neural network training regularization",
-        "key_elements": ["dropout regularization", "backpropagation"],
-        "candidate_cpc_classes": ["G06N3/08"],
-    }
+VALID_EXTRACTION = _DisclosureExtraction(
+    technical_field="Neural network training regularization",
+    key_elements=["dropout regularization", "backpropagation"],
+    candidate_cpc_classes=["G06N3/08"],
 )
 
 
+def _client_returning(*results) -> MagicMock:
+    client = MagicMock()
+    client.with_structured_output.return_value.invoke.side_effect = list(results)
+    return client
+
+
 def test_parse_disclosure_returns_populated_disclosure():
-    client = _client_returning(VALID_JSON)
+    client = _client_returning(VALID_EXTRACTION)
     disclosure = parse_disclosure("A method that randomly disables neurons during training.", client=client)
 
     assert disclosure.raw_text == "A method that randomly disables neurons during training."
@@ -38,42 +28,38 @@ def test_parse_disclosure_returns_populated_disclosure():
     assert disclosure.candidate_cpc_classes == ["G06N3/08"]
 
 
-def test_parse_disclosure_calls_groq_with_json_mode_and_correct_model():
-    client = _client_returning(VALID_JSON)
-    settings = Settings(groq_model="test-model")
+def test_parse_disclosure_uses_correct_schema():
+    client = _client_returning(VALID_EXTRACTION)
+    parse_disclosure("some disclosure", client=client)
 
-    parse_disclosure("some disclosure", client=client, settings=settings)
-
-    call_kwargs = client.chat_completion.call_args.kwargs
-    assert call_kwargs["model"] == "test-model"
-    assert call_kwargs["response_format"] == {"type": "json_object"}
+    client.with_structured_output.assert_called_once_with(_DisclosureExtraction)
 
 
-def test_parse_disclosure_retries_on_malformed_json_then_succeeds():
-    client = _client_returning("not json at all", VALID_JSON)
+def test_parse_disclosure_handles_missing_optional_fields_via_defaults():
+    minimal = _DisclosureExtraction(technical_field="x")  # key_elements/candidate_cpc_classes default to []
+    client = _client_returning(minimal)
+
+    disclosure = parse_disclosure("x", client=client)
+
+    assert disclosure.key_elements == []
+    assert disclosure.candidate_cpc_classes == []
+
+
+def test_parse_disclosure_retries_when_invoke_raises_then_succeeds():
+    client = _client_returning(ValueError("model produced an unparseable tool call"), VALID_EXTRACTION)
     disclosure = parse_disclosure("x", client=client)
 
     assert disclosure.technical_field == "Neural network training regularization"
-    assert client.chat_completion.call_count == 2
-
-
-def test_parse_disclosure_retries_on_missing_key_then_succeeds():
-    missing_key_json = json.dumps({"technical_field": "x", "key_elements": []})  # no candidate_cpc_classes
-    client = _client_returning(missing_key_json, VALID_JSON)
-
-    disclosure = parse_disclosure("x", client=client)
-
-    assert disclosure.candidate_cpc_classes == ["G06N3/08"]
-    assert client.chat_completion.call_count == 2
+    assert client.with_structured_output.return_value.invoke.call_count == 2
 
 
 def test_parse_disclosure_raises_after_exhausting_retries():
-    client = _client_returning("not json", "still not json")
+    client = _client_returning(ValueError("bad"), ValueError("still bad"))
 
     with pytest.raises(ValueError, match="failed to produce valid output"):
         parse_disclosure("x", client=client)
 
-    assert client.chat_completion.call_count == 2
+    assert client.with_structured_output.return_value.invoke.call_count == 2
 
 
 @pytest.mark.integration

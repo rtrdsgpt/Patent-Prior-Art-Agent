@@ -19,8 +19,15 @@ rank-bm25>=0.2.2
 sentence-transformers>=2.2.0
 chromadb>=0.5.0
 
-# LLM (Groq primary, same provider as Financial Anomaly Detection Using RAG)
+# LLM (Groq primary, same provider as Financial Anomaly Detection Using RAG). LangChain is
+# the LLM/agent-orchestration layer: langchain-groq's ChatGroq wraps the same underlying
+# `groq` SDK (still a direct dependency of agents/groq_client.py's rotation logic, which
+# catches groq.RateLimitError specifically), langgraph is the orchestrator
+# (agents/orchestrator.py's StateGraph).
 groq>=0.30.0
+langchain-core>=1.0.0
+langchain-groq>=1.0.0
+langgraph>=1.0.0
 
 # API layer (added in section 3)
 fastapi>=0.110.0

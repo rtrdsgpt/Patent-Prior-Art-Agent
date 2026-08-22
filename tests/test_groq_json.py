@@ -1,69 +1,70 @@
 from unittest.mock import MagicMock
 
 import pytest
+from pydantic import BaseModel
 
-from agents.groq_json import request_json
+from agents.groq_json import request_structured
 from config.settings import Settings
 
 
-def _fake_response(content: str):
-    response = MagicMock()
-    response.choices[0].message.content = content
-    return response
+class _Schema(BaseModel):
+    x: int
 
 
-def _client_returning(*contents: str) -> MagicMock:
+def _client_returning(*results) -> MagicMock:
+    """`results` entries that are `Exception` instances are raised instead of returned,
+    so a test can interleave failures and successes across attempts."""
     client = MagicMock()
-    client.chat_completion.side_effect = [_fake_response(c) for c in contents]
+    side_effects = [r if isinstance(r, Exception) else r for r in results]
+    client.with_structured_output.return_value.invoke.side_effect = side_effects
     return client
 
 
-def test_request_json_returns_validated_result_on_first_try():
-    client = _client_returning('{"x": 1}')
-    result = request_json(client, Settings(), "system", "user", validate=lambda d: d["x"])
+def test_request_structured_returns_validated_result_on_first_try():
+    client = _client_returning(_Schema(x=1))
+    result = request_structured(client, Settings(), "system", "user", schema=_Schema, validate=lambda parsed: parsed.x)
     assert result == 1
 
 
-def test_request_json_passes_json_mode_and_model_to_client():
-    client = _client_returning('{"x": 1}')
-    settings = Settings(groq_model="my-model")
-    request_json(client, settings, "system", "user", validate=lambda d: d["x"])
+def test_request_structured_passes_schema_and_messages_to_client():
+    client = _client_returning(_Schema(x=1))
+    request_structured(client, Settings(), "system", "user", schema=_Schema, validate=lambda parsed: parsed.x)
 
-    kwargs = client.chat_completion.call_args.kwargs
-    assert kwargs["model"] == "my-model"
-    assert kwargs["response_format"] == {"type": "json_object"}
+    client.with_structured_output.assert_called_once_with(_Schema)
+    messages = client.with_structured_output.return_value.invoke.call_args.args[0]
+    assert messages[0] == {"role": "system", "content": "system"}
+    assert messages[1] == {"role": "user", "content": "user"}
 
 
-def test_request_json_retries_on_invalid_json_syntax():
-    client = _client_returning("not json", '{"x": 2}')
-    result = request_json(client, Settings(), "system", "user", validate=lambda d: d["x"])
+def test_request_structured_retries_when_invoke_raises():
+    client = _client_returning(ValueError("bad tool call"), _Schema(x=2))
+    result = request_structured(client, Settings(), "system", "user", schema=_Schema, validate=lambda parsed: parsed.x)
     assert result == 2
-    assert client.chat_completion.call_count == 2
+    assert client.with_structured_output.return_value.invoke.call_count == 2
 
 
-def test_request_json_retries_when_validate_raises():
-    def validate(parsed: dict) -> int:
-        if "x" not in parsed:
-            raise KeyError("x")
-        return parsed["x"]
+def test_request_structured_retries_when_validate_raises():
+    def validate(parsed: _Schema) -> int:
+        if parsed.x != 3:
+            raise ValueError("not the expected value")
+        return parsed.x
 
-    client = _client_returning('{"y": 1}', '{"x": 3}')
-    result = request_json(client, Settings(), "system", "user", validate=validate)
+    client = _client_returning(_Schema(x=1), _Schema(x=3))
+    result = request_structured(client, Settings(), "system", "user", schema=_Schema, validate=validate)
     assert result == 3
-    assert client.chat_completion.call_count == 2
+    assert client.with_structured_output.return_value.invoke.call_count == 2
 
 
-def test_request_json_raises_after_exhausting_max_attempts():
-    client = _client_returning("bad", "still bad", "also bad")
+def test_request_structured_raises_after_exhausting_max_attempts():
+    client = _client_returning(ValueError("bad"), ValueError("still bad"), ValueError("also bad"))
     with pytest.raises(ValueError, match="failed to produce valid output"):
-        request_json(client, Settings(), "system", "user", validate=lambda d: d["x"], max_attempts=3)
-    assert client.chat_completion.call_count == 3
+        request_structured(client, Settings(), "system", "user", schema=_Schema, validate=lambda parsed: parsed.x, max_attempts=3)
+    assert client.with_structured_output.return_value.invoke.call_count == 3
 
 
-def test_request_json_feeds_correction_message_back_to_model():
-    client = _client_returning("not json", '{"x": 1}')
-    request_json(client, Settings(), "system", "user", validate=lambda d: d["x"])
+def test_request_structured_feeds_correction_message_back_to_model():
+    client = _client_returning(ValueError("bad tool call"), _Schema(x=1))
+    request_structured(client, Settings(), "system", "user", schema=_Schema, validate=lambda parsed: parsed.x)
 
-    second_call_messages = client.chat_completion.call_args_list[1].kwargs["messages"]
-    assert second_call_messages[-2]["content"] == "not json"
+    second_call_messages = client.with_structured_output.return_value.invoke.call_args_list[1].args[0]
     assert "wasn't valid" in second_call_messages[-1]["content"]

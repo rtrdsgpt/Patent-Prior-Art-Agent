@@ -1123,3 +1123,110 @@ the Airflow image or a CI job that installs `requirements-airflow.txt`). `docker
 gained an `airflow` service (`airflow standalone` — SQLite + `SequentialExecutor`,
 appropriate for one low-frequency DAG) for the "real deployment" story, distinct from the
 one-shot `dags test` verification path used above.
+
+## 2026-08-21/22 — Migrated to LangGraph + LangChain, and two real production-model bugs it surfaced
+
+User asked whether this project used LangChain/LangGraph (it didn't — `orchestrator.py` was
+explicitly hand-rolled, with documented reasoning for why). Asked which of two scopes they
+wanted before touching anything, since the deeper option meant rebuilding the multi-key Groq
+rotation on top of a LangChain wrapper rather than the raw SDK: they chose the deeper one
+(LangGraph for orchestration *and* LangChain's LLM layer, not just orchestration).
+
+**Verified every real API/behavior before writing code against it, not assumed from docs**
+(same standard as everything else this session): installed `langchain-core`/`langgraph`/
+`langchain-groq`, then live-tested `ChatGroq.invoke()`, `.with_structured_output()`, and a
+standalone toy `StateGraph` using `Send` + an `Annotated[list, operator.add]` reducer (to
+confirm dynamic fan-out + convergence actually works the way the docs imply) *before*
+touching any of the real pipeline code.
+
+**Immediate, unrelated real finding:** the very first live call failed with `groq.NotFoundError:
+model llama-3.3-70b-versatile does not exist`. That model — this project's default since
+early in the build — had been decommissioned by Groq at some point between then and now.
+Re-ran `models.list()` rather than guessing a replacement, checked `with_structured_output`
+compatibility before adopting one, and switched the default to `openai/gpt-oss-120b`. Not
+caused by the migration; would have been silently broken the next time anyone ran this
+project regardless. Caught only because "verify live before trusting it" is a standing habit
+here, not a one-off check.
+
+**`agents/groq_client.py`: `RotatingChatGroq` replaces `RotatingGroqClient`.** LangChain has
+no built-in multi-key rotation, so this wraps one `ChatGroq` per key and re-implements the
+same rotate-on-429 logic as before, now over `.invoke()`/`.with_structured_output().invoke()`
+instead of the raw SDK's `.chat.completions.create()`. Confirmed `ChatGroq` still raises the
+same `groq.RateLimitError` on a 429 (traced a live call's traceback through
+`langchain_groq/chat_models.py` into `groq/_base_client.py` — it's the same underlying SDK
+client under the hood, not a different exception hierarchy to catch).
+
+**`agents/groq_json.py` → `request_structured`**: replaces raw JSON-mode + manual
+`json.loads` with LangChain's `with_structured_output(schema)`, which does the schema
+validation itself now. The bounded-retry loop still exists and still matters — it's just
+scoped down to what a schema alone can't express (claims_parser's "every expected claim
+number got a response," comparison_agent's "every candidate_claim_number is real"), not
+basic shape validation anymore.
+
+**All three structured-output agents** (`disclosure_parser`, `claims_parser`,
+`comparison_agent`) now define a private intermediate Pydantic schema for what the *model*
+extracts (e.g. `_DisclosureExtraction` — no `raw_text` field, since that's supplied by the
+caller, not the model) and convert to the real domain type (`InventionDisclosure`, etc.)
+inside `validate`. **`risk_report_agent`** just calls `client.invoke(...).content` — plain
+prose, no schema, simplest migration of the four.
+
+**`agents/orchestrator.py` → a LangGraph `StateGraph`, and the earlier "why not LangGraph"
+reasoning genuinely doesn't hold anymore.** The per-candidate step (claims-parser →
+comparison → citation-guard, once per search result) is modeled as a real `Send`-based
+dynamic fan-out into an `assess_candidate` node, converging into one `risk_report` node via
+an `Annotated[list, operator.add]` reducer on `assessments` — this *is* real branching
+(runtime-sized, not a fixed sequence), which is exactly the condition under which the
+original hand-rolled version's docstring said a graph framework would start earning its
+keep. `PipelineState`/`_CandidateState` keep the shared indexes/client/settings out of graph
+state entirely (bound via closures in `_build_graph`, not stored as state) — large,
+non-serializable objects that a LangGraph checkpoint shouldn't need to hold.
+
+**Testing note:** every existing mocked `test_orchestrator.py` test (which monkeypatches
+`agents.orchestrator.parse_disclosure` etc. at the module level) passed against the new
+graph implementation *completely unchanged* — because the node closures still do a plain
+dynamic lookup of those module-level names at call time, monkeypatching before `.invoke()`
+runs still works exactly like it did against the old linear function. Added one new test
+specific to the fan-out mechanism itself (3 candidates, asserting `assess_novelty` is called
+once per candidate and all three assessments survive into what `risk_report` receives) —
+worth a dedicated test since it's the actual new mechanism, not just re-proving old behavior
+still holds.
+
+**Real bug #2, found running the full live pipeline against an actual multi-claim patent
+from the real corpus, not a synthetic test case:** `groq.BadRequestError: Tool choice is
+required, but model did not call a tool` — `with_structured_output`'s default method
+(`"function_calling"`, forced tool-choice) failed on a real 3-independent-claim patent; the
+model narrated a nicely-formatted markdown breakdown in plain prose instead of invoking the
+tool. Reproduced the *exact* failing prompt standalone before attempting a fix (not just
+retried and hoped), tried `with_structured_output(schema, method="json_schema")` against the
+identical prompt, confirmed it succeeded. Applied the fix once, centrally, in
+`_RotatingStructuredOutput.invoke()` (`groq_client.py`) — every agent benefits without
+each having to remember to pass `method=`.
+
+**Re-ran the live pipeline after the fix — it got further, then failed on something
+different:** `ValueError: Response is missing elements for claim number(s): [9]` — a
+different real patent, one with enough independent claims that the model missed one on both
+of the bounded 2 attempts. This is **not a new bug** — it's the pre-existing bounded-retry-
+exhaustion path (present before this migration too) doing exactly what it's designed to do:
+surface an honest failure (job status `failed`, clear error message) rather than silently
+return incomplete data. Decided not to loosen `max_attempts` speculatively off one
+occurrence with no evidence it's systematic — the correct reaction to "the model
+occasionally can't fully comply within 2 tries on an unusually large patent" is the pipeline
+failing loudly, which is exactly what happened, not a code change.
+
+**Final confirmation: full live run through `api/pipeline.run_fto_analysis` against the real
+1488-patent corpus** with the original dropout disclosure — 10/10 candidates assessed, all
+10 `citation_verified: true`, and a coherent summary correctly naming the two genuine
+highest-risk candidates. This is the same standard applied throughout this session: don't
+call a migration done because unit tests pass, run it for real against real data until it
+either works or tells you something real is still wrong.
+
+Rewrote `tests/test_groq_client.py`, `test_groq_json.py`, `test_disclosure_parser.py`,
+`test_claims_parser.py`, `test_comparison_agent.py`, `test_risk_report_agent.py` for the new
+LangChain-shaped mocks (`client.with_structured_output(...).invoke(...)` instead of
+`client.chat_completion(...)`), and fixed one live-test assertion that broke for an
+unrelated, interesting reason: `openai/gpt-oss-120b` sometimes writes patent numbers with
+narrow no-break spaces ("US 1234567 A1") that the old model didn't — cosmetic prose
+formatting only (the structured data doesn't go through this), fixed by normalizing
+whitespace before the assertion rather than fighting the model's formatting. Added
+`langchain-core`/`langchain-groq`/`langgraph` to `requirements.txt`. Full suite: 175 passed,
+1 skipped (the Airflow DAG test, unchanged, still skips outside that image by design).

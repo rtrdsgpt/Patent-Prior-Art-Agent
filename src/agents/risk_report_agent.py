@@ -19,7 +19,7 @@ directly rather than trusting the narrative alone.
 
 from __future__ import annotations
 
-from agents.groq_client import RotatingGroqClient, build_groq_client
+from agents.groq_client import RotatingChatGroq, build_groq_client
 from config.settings import Settings, get_settings
 from schema import FTOReport, InventionDisclosure, NoveltyAssessment
 from tracing import traced
@@ -65,7 +65,7 @@ def _build_user_prompt(disclosure: InventionDisclosure, assessments: list[Novelt
 def generate_risk_report(
     disclosure: InventionDisclosure,
     assessments: list[NoveltyAssessment],
-    client: RotatingGroqClient | None = None,
+    client: RotatingChatGroq | None = None,
     settings: Settings | None = None,
 ) -> FTOReport:
     """Aggregate already citation-verified `assessments` into an `FTOReport`.
@@ -77,13 +77,11 @@ def generate_risk_report(
     settings = settings or get_settings()
     client = client or build_groq_client(settings)
 
-    response = client.chat_completion(
-        model=settings.groq_model,
+    response = client.invoke(
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": _build_user_prompt(disclosure, assessments)},
-        ],
-        temperature=0,
+        ]
     )
 
-    return FTOReport(disclosure=disclosure, assessments=assessments, summary=response.choices[0].message.content)
+    return FTOReport(disclosure=disclosure, assessments=assessments, summary=response.content)

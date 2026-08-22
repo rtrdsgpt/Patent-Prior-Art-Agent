@@ -16,8 +16,10 @@ compromise correctness downstream, only reasoning clarity.
 
 from __future__ import annotations
 
-from agents.groq_client import RotatingGroqClient, build_groq_client
-from agents.groq_json import request_json
+from pydantic import BaseModel, Field
+
+from agents.groq_client import RotatingChatGroq, build_groq_client
+from agents.groq_json import request_structured
 from config.settings import Settings, get_settings
 from schema import Patent
 from tracing import traced
@@ -26,11 +28,16 @@ _SYSTEM_PROMPT = """You are a patent claims analyst. You will be given one or mo
 patent claims. For each claim, break it into its discrete elements — the individual technical \
 steps, components, or requirements the claim recites (typically claim drafting separates these \
 with semicolons or "and"). Stay as close to the claim's own wording as possible; don't add, \
-omit, or rephrase substantive content. Respond with ONLY a JSON object of this shape:
+omit, or rephrase substantive content. Include one entry per claim you were given, in any order."""
 
-{"claims": [{"claim_number": <int>, "elements": [<string>, ...]}, ...]}
 
-Include one entry per claim you were given, in any order."""
+class _ClaimElements(BaseModel):
+    claim_number: int
+    elements: list[str] = Field(default_factory=list)
+
+
+class _ClaimsExtraction(BaseModel):
+    claims: list[_ClaimElements] = Field(default_factory=list)
 
 
 def _build_user_prompt(independent_claims) -> str:
@@ -38,8 +45,8 @@ def _build_user_prompt(independent_claims) -> str:
     return f"Independent claims:\n\n{claims_text}"
 
 
-def _validate(parsed: dict, expected_claim_numbers: set[int]) -> dict[int, list[str]]:
-    result = {entry["claim_number"]: list(entry["elements"]) for entry in parsed["claims"]}
+def _validate(parsed: _ClaimsExtraction, expected_claim_numbers: set[int]) -> dict[int, list[str]]:
+    result = {entry.claim_number: entry.elements for entry in parsed.claims}
     missing = expected_claim_numbers - result.keys()
     if missing:
         raise ValueError(f"Response is missing elements for claim number(s): {sorted(missing)}")
@@ -49,7 +56,7 @@ def _validate(parsed: dict, expected_claim_numbers: set[int]) -> dict[int, list[
 @traced("claims_parser")
 def parse_claim_elements(
     patent: Patent,
-    client: RotatingGroqClient | None = None,
+    client: RotatingChatGroq | None = None,
     settings: Settings | None = None,
 ) -> dict[int, list[str]]:
     """Return `{claim_number: [element, ...]}` for every independent claim of `patent`.
@@ -66,10 +73,11 @@ def parse_claim_elements(
     client = client or build_groq_client(settings)
     expected = {c.claim_number for c in independent_claims}
 
-    return request_json(
+    return request_structured(
         client,
         settings,
         system_prompt=_SYSTEM_PROMPT,
         user_prompt=_build_user_prompt(independent_claims),
+        schema=_ClaimsExtraction,
         validate=lambda parsed: _validate(parsed, expected),
     )

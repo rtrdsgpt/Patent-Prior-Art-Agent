@@ -1,23 +1,16 @@
-import json
 from unittest.mock import MagicMock
 
 import pytest
 
-from agents.comparison_agent import assess_novelty
+from agents.comparison_agent import _Comparison, _ComparisonsExtraction, assess_novelty
 from config.settings import get_settings
 from ingestion.fixtures import load_fixture_patents
 from schema import Claim, InventionDisclosure, Patent
 
 
-def _fake_response(content: str):
-    response = MagicMock()
-    response.choices[0].message.content = content
-    return response
-
-
-def _client_returning(*contents: str) -> MagicMock:
+def _client_returning(*results) -> MagicMock:
     client = MagicMock()
-    client.chat_completion.side_effect = [_fake_response(c) for c in contents]
+    client.with_structured_output.return_value.invoke.side_effect = list(results)
     return client
 
 
@@ -37,25 +30,11 @@ DISCLOSURE = InventionDisclosure(
     candidate_cpc_classes=["G06N3/08"],
 )
 
-VALID_RESPONSE = json.dumps(
-    {
-        "comparisons": [
-            {
-                "disclosure_element": "doing X",
-                "candidate_claim_number": 1,
-                "cited_claim_text": "doing X",
-                "overlap_explanation": "Directly matches.",
-                "overlap_assessed": True,
-            },
-            {
-                "disclosure_element": "doing something unrelated",
-                "candidate_claim_number": 1,
-                "cited_claim_text": "doing Y",
-                "overlap_explanation": "No real overlap.",
-                "overlap_assessed": False,
-            },
-        ]
-    }
+VALID_EXTRACTION = _ComparisonsExtraction(
+    comparisons=[
+        _Comparison(disclosure_element="doing X", candidate_claim_number=1, cited_claim_text="doing X", overlap_explanation="Directly matches.", overlap_assessed=True),
+        _Comparison(disclosure_element="doing something unrelated", candidate_claim_number=1, cited_claim_text="doing Y", overlap_explanation="No real overlap.", overlap_assessed=False),
+    ]
 )
 
 
@@ -67,7 +46,7 @@ def test_assess_novelty_returns_empty_when_no_disclosure_elements():
 
     assert result.candidate_patent_id == "US1234567A1"
     assert result.element_comparisons == []
-    client.chat_completion.assert_not_called()
+    client.with_structured_output.assert_not_called()
 
 
 def test_assess_novelty_returns_empty_when_patent_has_no_independent_claims():
@@ -84,11 +63,11 @@ def test_assess_novelty_returns_empty_when_patent_has_no_independent_claims():
     result = assess_novelty(DISCLOSURE, no_independent, client=client)
 
     assert result.element_comparisons == []
-    client.chat_completion.assert_not_called()
+    client.with_structured_output.assert_not_called()
 
 
 def test_assess_novelty_builds_comparisons_with_correct_patent_id():
-    client = _client_returning(VALID_RESPONSE)
+    client = _client_returning(VALID_EXTRACTION)
 
     result = assess_novelty(DISCLOSURE, PATENT, client=client)
 
@@ -98,7 +77,7 @@ def test_assess_novelty_builds_comparisons_with_correct_patent_id():
 
 
 def test_assess_novelty_preserves_overlap_assessed_flags():
-    client = _client_returning(VALID_RESPONSE)
+    client = _client_returning(VALID_EXTRACTION)
 
     result = assess_novelty(DISCLOSURE, PATENT, client=client)
 
@@ -108,77 +87,53 @@ def test_assess_novelty_preserves_overlap_assessed_flags():
 
 
 def test_assess_novelty_retries_on_invalid_claim_number():
-    invalid_claim_number = json.dumps(
-        {
-            "comparisons": [
-                {
-                    "disclosure_element": "doing X",
-                    "candidate_claim_number": 99,  # doesn't exist on PATENT
-                    "cited_claim_text": "doing X",
-                    "overlap_explanation": "x",
-                    "overlap_assessed": True,
-                },
-                {
-                    "disclosure_element": "doing something unrelated",
-                    "candidate_claim_number": 1,
-                    "cited_claim_text": "doing Y",
-                    "overlap_explanation": "x",
-                    "overlap_assessed": False,
-                },
-            ]
-        }
+    invalid_claim_number = _ComparisonsExtraction(
+        comparisons=[
+            _Comparison(disclosure_element="doing X", candidate_claim_number=99, cited_claim_text="doing X", overlap_explanation="x", overlap_assessed=True),  # doesn't exist on PATENT
+            _Comparison(disclosure_element="doing something unrelated", candidate_claim_number=1, cited_claim_text="doing Y", overlap_explanation="x", overlap_assessed=False),
+        ]
     )
-    client = _client_returning(invalid_claim_number, VALID_RESPONSE)
+    client = _client_returning(invalid_claim_number, VALID_EXTRACTION)
 
     result = assess_novelty(DISCLOSURE, PATENT, client=client)
 
-    assert client.chat_completion.call_count == 2
+    assert client.with_structured_output.return_value.invoke.call_count == 2
     assert len(result.element_comparisons) == 2
 
 
 def test_assess_novelty_retries_when_a_disclosure_element_is_missing():
-    incomplete = json.dumps(
-        {
-            "comparisons": [
-                {
-                    "disclosure_element": "doing X",
-                    "candidate_claim_number": 1,
-                    "cited_claim_text": "doing X",
-                    "overlap_explanation": "x",
-                    "overlap_assessed": True,
-                }
-            ]
-        }
+    incomplete = _ComparisonsExtraction(
+        comparisons=[_Comparison(disclosure_element="doing X", candidate_claim_number=1, cited_claim_text="doing X", overlap_explanation="x", overlap_assessed=True)]
     )
-    client = _client_returning(incomplete, VALID_RESPONSE)
+    client = _client_returning(incomplete, VALID_EXTRACTION)
 
     result = assess_novelty(DISCLOSURE, PATENT, client=client)
 
-    assert client.chat_completion.call_count == 2
+    assert client.with_structured_output.return_value.invoke.call_count == 2
     assert len(result.element_comparisons) == 2
 
 
 def test_assess_novelty_includes_claim_elements_as_reference_context():
-    client = _client_returning(VALID_RESPONSE)
+    client = _client_returning(VALID_EXTRACTION)
 
     assess_novelty(DISCLOSURE, PATENT, claim_elements={1: ["doing X", "doing Y"]}, client=client)
 
-    user_prompt = client.chat_completion.call_args.kwargs["messages"][1]["content"]
+    user_prompt = client.with_structured_output.return_value.invoke.call_args.args[0][1]["content"]
     assert "pre-structured breakdown" in user_prompt
     assert "doing X" in user_prompt
 
 
 def test_assess_novelty_omits_reference_context_when_claim_elements_not_given():
-    client = _client_returning(VALID_RESPONSE)
+    client = _client_returning(VALID_EXTRACTION)
 
     assess_novelty(DISCLOSURE, PATENT, client=client)
 
-    user_prompt = client.chat_completion.call_args.kwargs["messages"][1]["content"]
+    user_prompt = client.with_structured_output.return_value.invoke.call_args.args[0][1]["content"]
     assert "pre-structured breakdown" not in user_prompt
 
 
 def test_assess_novelty_citation_verified_left_unset():
-    client = _client_returning(VALID_RESPONSE)
+    client = _client_returning(VALID_EXTRACTION)
     result = assess_novelty(DISCLOSURE, PATENT, client=client)
     assert result.citation_verified is None
 

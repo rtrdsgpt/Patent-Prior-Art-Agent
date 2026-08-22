@@ -90,6 +90,29 @@ def test_run_fto_pipeline_skips_candidate_missing_from_patents_by_id(monkeypatch
     mocks["assess_novelty"].assert_not_called()
 
 
+def test_run_fto_pipeline_fans_out_and_accumulates_assessments_for_multiple_candidates(monkeypatch):
+    # The Send-based fan-out is the actual "why LangGraph now" claim in orchestrator.py's
+    # docstring -- worth a dedicated test with >1 candidate, not just the 1-candidate case
+    # every other test in this file already exercises.
+    candidates = [
+        SearchResult(patent_id="US10000001B2", score=3.0, retrieval_method="reranked"),
+        SearchResult(patent_id="US10000002B2", score=2.0, retrieval_method="reranked"),
+        SearchResult(patent_id="US10000003B2", score=1.0, retrieval_method="reranked"),
+    ]
+
+    def fake_assess_novelty(disclosure, patent, claim_elements=None, client=None, settings=None):
+        return NoveltyAssessment(candidate_patent_id=patent.patent_id, element_comparisons=[])
+
+    mocks = _patch_pipeline(monkeypatch, candidates=candidates)
+    mocks["assess_novelty"].side_effect = fake_assess_novelty
+
+    run_fto_pipeline("x", bm25_index=MagicMock(), embedding_collection=MagicMock(), patents_by_id=PATENTS_BY_ID, client=MagicMock())
+
+    assert mocks["assess_novelty"].call_count == 3
+    assessments_passed = mocks["risk_report"].call_args.args[1]
+    assert {a.candidate_patent_id for a in assessments_passed} == {c.patent_id for c in candidates}
+
+
 def test_run_fto_pipeline_reuses_one_client_across_all_stages(monkeypatch):
     mocks = _patch_pipeline(monkeypatch)
     shared_client = MagicMock()

@@ -19,8 +19,10 @@ interview prep, not just a changelog.
   search (Reciprocal Rank Fusion), cross-encoder reranking.
 - **Agents** (`src/agents/`) — disclosure-parser, prior-art search (adaptive query
   expansion), claims-parser, comparison/novelty-assessment, risk-report, and a deterministic
-  citation-verification guard, orchestrated as a hand-rolled bounded pipeline
-  (`agents/orchestrator.py`). All LLM calls go through a rotating multi-key Groq client.
+  citation-verification guard, orchestrated with **LangGraph** (`agents/orchestrator.py`'s
+  `StateGraph`, with a real `Send`-based dynamic fan-out for the per-candidate step). All LLM
+  calls go through **LangChain**'s `ChatGroq`, wrapped for multi-key rotation
+  (`agents/groq_client.py`).
 - **API** (`src/api/`) — FastAPI: `POST /disclosure/analyze` → job id, `GET /jobs/{id}`,
   `GET /report/{id}` → a real `FTOReport`.
 - **MCP** (`src/mcp_server.py`) — `search_prior_art` and `assess_novelty` tools.

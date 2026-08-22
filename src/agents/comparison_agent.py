@@ -12,8 +12,10 @@ agent's job is producing the comparison, not verifying it.
 
 from __future__ import annotations
 
-from agents.groq_client import RotatingGroqClient, build_groq_client
-from agents.groq_json import request_json
+from pydantic import BaseModel, Field
+
+from agents.groq_client import RotatingChatGroq, build_groq_client
+from agents.groq_json import request_structured
 from config.settings import Settings, get_settings
 from schema import ClaimElementComparison, InventionDisclosure, NoveltyAssessment, Patent
 from tracing import traced
@@ -32,12 +34,19 @@ candidate's independent claims covers ("reads on") it:
   false otherwise.
 - Echo the disclosure element back EXACTLY as given in "disclosure_element" (don't reword it).
 
-Respond with ONLY a JSON object of this shape:
-
-{"comparisons": [{"disclosure_element": <string>, "candidate_claim_number": <int>, \
-"cited_claim_text": <string>, "overlap_explanation": <string>, "overlap_assessed": <bool>}, ...]}
-
 Include exactly one entry per disclosure element you were given."""
+
+
+class _Comparison(BaseModel):
+    disclosure_element: str
+    candidate_claim_number: int
+    cited_claim_text: str
+    overlap_explanation: str
+    overlap_assessed: bool
+
+
+class _ComparisonsExtraction(BaseModel):
+    comparisons: list[_Comparison] = Field(default_factory=list)
 
 
 def _build_user_prompt(disclosure: InventionDisclosure, independent_claims, claim_elements: dict[int, list[str]] | None) -> str:
@@ -54,26 +63,25 @@ def _build_user_prompt(disclosure: InventionDisclosure, independent_claims, clai
     return prompt
 
 
-def _validate(parsed: dict, patent_id: str, disclosure_elements: list[str], valid_claim_numbers: set[int]) -> list[ClaimElementComparison]:
+def _validate(parsed: _ComparisonsExtraction, patent_id: str, disclosure_elements: list[str], valid_claim_numbers: set[int]) -> list[ClaimElementComparison]:
     comparisons = []
     seen_elements = set()
 
-    for entry in parsed["comparisons"]:
-        claim_number = entry["candidate_claim_number"]
-        if claim_number not in valid_claim_numbers:
-            raise ValueError(f"candidate_claim_number {claim_number} is not one of this patent's independent claims {sorted(valid_claim_numbers)}")
+    for entry in parsed.comparisons:
+        if entry.candidate_claim_number not in valid_claim_numbers:
+            raise ValueError(f"candidate_claim_number {entry.candidate_claim_number} is not one of this patent's independent claims {sorted(valid_claim_numbers)}")
 
         comparisons.append(
             ClaimElementComparison(
-                disclosure_element=entry["disclosure_element"],
+                disclosure_element=entry.disclosure_element,
                 candidate_patent_id=patent_id,
-                candidate_claim_number=claim_number,
-                cited_claim_text=entry["cited_claim_text"],
-                overlap_explanation=entry["overlap_explanation"],
-                overlap_assessed=entry["overlap_assessed"],
+                candidate_claim_number=entry.candidate_claim_number,
+                cited_claim_text=entry.cited_claim_text,
+                overlap_explanation=entry.overlap_explanation,
+                overlap_assessed=entry.overlap_assessed,
             )
         )
-        seen_elements.add(entry["disclosure_element"])
+        seen_elements.add(entry.disclosure_element)
 
     missing = set(disclosure_elements) - seen_elements
     if missing:
@@ -87,7 +95,7 @@ def assess_novelty(
     disclosure: InventionDisclosure,
     patent: Patent,
     claim_elements: dict[int, list[str]] | None = None,
-    client: RotatingGroqClient | None = None,
+    client: RotatingChatGroq | None = None,
     settings: Settings | None = None,
 ) -> NoveltyAssessment:
     """Compare every element of `disclosure` against `patent`'s independent claims.
@@ -109,11 +117,12 @@ def assess_novelty(
     client = client or build_groq_client(settings)
     valid_claim_numbers = {c.claim_number for c in independent_claims}
 
-    comparisons = request_json(
+    comparisons = request_structured(
         client,
         settings,
         system_prompt=_SYSTEM_PROMPT,
         user_prompt=_build_user_prompt(disclosure, independent_claims, claim_elements),
+        schema=_ComparisonsExtraction,
         validate=lambda parsed: _validate(parsed, patent.patent_id, disclosure.key_elements, valid_claim_numbers),
     )
 

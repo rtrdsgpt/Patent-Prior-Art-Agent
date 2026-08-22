@@ -26,8 +26,12 @@ class Settings(BaseSettings):
         return [key.strip() for key in self.groq_api_key.split(",") if key.strip()]
 
     # Confirmed available via a live `models.list()` call against the configured keys
-    # before picking a default — see log.md.
-    groq_model: str = "llama-3.3-70b-versatile"
+    # before picking a default — see log.md. Re-verified on the LangChain migration date:
+    # the original default (`llama-3.3-70b-versatile`) had been decommissioned by Groq since
+    # this was first picked (a live call returned `404 model_not_found`) — re-checked
+    # `models.list()` again rather than guessing a replacement, and confirmed this one
+    # actually supports tool-calling-based structured output before adopting it.
+    groq_model: str = "openai/gpt-oss-120b"
 
     # BigQuery / Google Patents Public Data
     gcp_project_id: Optional[str] = None

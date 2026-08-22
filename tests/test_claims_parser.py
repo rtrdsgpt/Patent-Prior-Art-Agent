@@ -1,23 +1,16 @@
-import json
 from unittest.mock import MagicMock
 
 import pytest
 
-from agents.claims_parser import parse_claim_elements
+from agents.claims_parser import _ClaimElements, _ClaimsExtraction, parse_claim_elements
 from config.settings import get_settings
 from ingestion.fixtures import load_fixture_patents
 from schema import Claim, Patent
 
 
-def _fake_response(content: str):
-    response = MagicMock()
-    response.choices[0].message.content = content
-    return response
-
-
-def _client_returning(*contents: str) -> MagicMock:
+def _client_returning(*results) -> MagicMock:
     client = MagicMock()
-    client.chat_completion.side_effect = [_fake_response(c) for c in contents]
+    client.with_structured_output.return_value.invoke.side_effect = list(results)
     return client
 
 
@@ -38,13 +31,11 @@ TWO_INDEPENDENT_CLAIMS = [
     Claim(claim_number=3, text="A system comprising: a memory; and a processor.", is_independent=True),
 ]
 
-VALID_RESPONSE = json.dumps(
-    {
-        "claims": [
-            {"claim_number": 1, "elements": ["doing X", "doing Y"]},
-            {"claim_number": 3, "elements": ["a memory", "a processor"]},
-        ]
-    }
+VALID_EXTRACTION = _ClaimsExtraction(
+    claims=[
+        _ClaimElements(claim_number=1, elements=["doing X", "doing Y"]),
+        _ClaimElements(claim_number=3, elements=["a memory", "a processor"]),
+    ]
 )
 
 
@@ -55,12 +46,12 @@ def test_parse_claim_elements_returns_empty_dict_for_no_independent_claims():
     result = parse_claim_elements(patent, client=client)
 
     assert result == {}
-    client.chat_completion.assert_not_called()
+    client.with_structured_output.assert_not_called()
 
 
 def test_parse_claim_elements_maps_claim_number_to_elements():
     patent = _patent(TWO_INDEPENDENT_CLAIMS)
-    client = _client_returning(VALID_RESPONSE)
+    client = _client_returning(VALID_EXTRACTION)
 
     result = parse_claim_elements(patent, client=client)
 
@@ -69,25 +60,27 @@ def test_parse_claim_elements_maps_claim_number_to_elements():
 
 def test_parse_claim_elements_batches_all_independent_claims_into_one_call():
     patent = _patent(TWO_INDEPENDENT_CLAIMS)
-    client = _client_returning(VALID_RESPONSE)
+    client = _client_returning(VALID_EXTRACTION)
 
     parse_claim_elements(patent, client=client)
 
-    assert client.chat_completion.call_count == 1
-    user_prompt = client.chat_completion.call_args.kwargs["messages"][1]["content"]
+    client.with_structured_output.assert_called_once_with(_ClaimsExtraction)
+    invoke = client.with_structured_output.return_value.invoke
+    assert invoke.call_count == 1
+    user_prompt = invoke.call_args.args[0][1]["content"]
     assert "Claim 1" in user_prompt
     assert "Claim 3" in user_prompt
     assert "Claim 2" not in user_prompt  # dependent claim excluded
 
 
 def test_parse_claim_elements_retries_when_a_claim_is_missing_from_response():
-    incomplete = json.dumps({"claims": [{"claim_number": 1, "elements": ["doing X"]}]})  # missing claim 3
-    client = _client_returning(incomplete, VALID_RESPONSE)
+    incomplete = _ClaimsExtraction(claims=[_ClaimElements(claim_number=1, elements=["doing X"])])  # missing claim 3
+    client = _client_returning(incomplete, VALID_EXTRACTION)
 
     result = parse_claim_elements(_patent(TWO_INDEPENDENT_CLAIMS), client=client)
 
     assert result == {1: ["doing X", "doing Y"], 3: ["a memory", "a processor"]}
-    assert client.chat_completion.call_count == 2
+    assert client.with_structured_output.return_value.invoke.call_count == 2
 
 
 @pytest.mark.integration

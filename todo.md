@@ -41,8 +41,11 @@ reasoning behind every decision.
 - [x] **Comparison/novelty-assessment agent** — `agents/comparison_agent.py`.
 - [x] **Risk-report/critic agent** — `agents/risk_report_agent.py`; citation-verification
       guard is its own deterministic module, `agents/citation_guard.py` (no LLM).
-- [x] Orchestrate agents — `agents/orchestrator.py`, a hand-rolled bounded sequence (not
-      LangGraph — see that module's docstring for why).
+- [x] Orchestrate agents — `agents/orchestrator.py`, a LangGraph `StateGraph` (the
+      per-candidate claims-parser/comparison/citation-guard step is a real `Send`-based
+      dynamic fan-out, converging via a reducer). All LLM calls go through LangChain's
+      `ChatGroq`, wrapped for multi-key rotation — see `agents/groq_client.py` and log.md
+      for the migration story and two real bugs it surfaced.
 
 ## 3. API layer
 - [x] FastAPI: `POST /disclosure/analyze` → job id
